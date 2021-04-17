@@ -11,6 +11,7 @@ DWORD __stdcall ThreadEntry(LPVOID);
 
 LRESULT CALLBACK SafeWndProc(HWND hWnd, UINT Message, WPARAM wParam, LPARAM lParam) noexcept;
 LRESULT CALLBACK WndProc(HWND hWnd, UINT Message, WPARAM wParam, LPARAM lParam);
+LRESULT CALLBACK OverlayWndProc(HWND hWnd, UINT Message, WPARAM wParam, LPARAM lParam);
 
 class GWToolbox {
     GWToolbox() {};
@@ -24,9 +25,12 @@ public:
     static HMODULE GetDLLModule();
     static void Draw(IDirect3DDevice9* device);
     static void Update(GW::HookStatus *);
+    static void RepositionOverlay();
+    static void DestroyOverlay();
 
     void Initialize();
     void Terminate();
+
 
     void OpenSettingsFile();
     void LoadModuleSettings();

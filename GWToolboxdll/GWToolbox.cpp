@@ -19,6 +19,7 @@
 #include <GuiUtils.h>
 #include <GWToolbox.h>
 #include <Logger.h>
+#include <wingdi.h>
 
 #include <Modules/Resources.h>
 #include <Modules/ChatCommands.h>
@@ -28,6 +29,9 @@
 #include <Windows/MainWindow.h>
 #include <Widgets/Minimap/Minimap.h>
 
+#ifndef RGB
+#define RGB(r,g,b)          ((COLORREF)(((BYTE)(r)|((WORD)((BYTE)(g))<<8))|(((DWORD)(BYTE)(b))<<16)))
+#endif
 namespace {
     HMODULE dllmodule = 0;
 
@@ -40,6 +44,19 @@ namespace {
     int last_drawing_passes = 0;
 
     bool defer_close = false;
+
+    // Imgui overlay vars
+    WNDCLASSEX imgui_window_class = { sizeof(WNDCLASSEX), CS_CLASSDC, OverlayWndProc, 0L, 0L, NULL, NULL, NULL, NULL, NULL, "ImGui", NULL };
+    LPDIRECT3D9 imgui_d3d9Ex = NULL;
+    LPDIRECT3DDEVICE9 imgui_d3dDevice = NULL;
+    D3DPRESENT_PARAMETERS    imgui_d3dparams = {};
+    HWND imgui_window_handle = NULL;
+
+    HWND gw_window_handle = NULL;
+
+    COLORREF imgui_mask = RGB(0xff,0xff,0x01);
+    D3DCOLOR d3d_mask = D3DCOLOR_XRGB(0xff, 0xff, 0x01);
+
 }
 
 HMODULE GWToolbox::GetDLLModule() {
@@ -94,7 +111,7 @@ DWORD __stdcall ThreadEntry(LPVOID) {
     });
     GW::Render::SetResetCallback([](IDirect3DDevice9* device) {
         UNREFERENCED_PARAMETER(device);
-        ImGui_ImplDX9_InvalidateDeviceObjects();
+        //ImGui_ImplDX9_InvalidateDeviceObjects();
     });
 
     Log::Log("Installed dx hooks\n");
@@ -148,11 +165,42 @@ LRESULT CALLBACK SafeWndProc(HWND hWnd, UINT Message, WPARAM wParam, LPARAM lPar
     }
 }
 
+void OverlayReset()
+{
+    ImGui_ImplDX9_InvalidateDeviceObjects();
+    HRESULT hr = imgui_d3dDevice->Reset(&imgui_d3dparams);
+    if (hr == D3DERR_INVALIDCALL)
+        IM_ASSERT(0);
+    ImGui_ImplDX9_CreateDeviceObjects();
+}
+
+LRESULT CALLBACK OverlayWndProc(HWND hWnd, UINT Message, WPARAM wParam, LPARAM lParam) {
+    switch (Message)
+    {
+    case WM_SIZE:
+        if (imgui_d3dDevice != NULL && wParam != SIZE_MINIMIZED)
+        {
+            imgui_d3dparams.BackBufferWidth = LOWORD(lParam);
+            imgui_d3dparams.BackBufferHeight = HIWORD(lParam);
+            OverlayReset();
+        }
+        return 0;
+    case WM_DESTROY:
+        //PostQuitMessage(0);
+        //return(0);
+    case WM_PAINT:
+        // This is handled in the game loop
+        break;
+    }
+    return DefWindowProc(hWnd, Message, wParam, lParam);
+}
+
 LRESULT CALLBACK WndProc(HWND hWnd, UINT Message, WPARAM wParam, LPARAM lParam) {
     static bool right_mouse_down = false;
 
+    UNREFERENCED_PARAMETER(hWnd); // NB: We explicitly use the gw window handle instead of assuming hWnd == gw_window_handle
     if (!tb_initialized || tb_destroyed) {
-        return CallWindowProc((WNDPROC)OldWndProc, hWnd, Message, wParam, lParam);
+        goto def_window_proc;
     }
 
     if (Message == WM_CLOSE) {
@@ -304,7 +352,8 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT Message, WPARAM wParam, LPARAM lParam) 
         // Otherwise, we may want to capture events. 
         // For that, we may want to only capture *successfull* hotkey activations.
         break;
-
+    case WM_PAINT:
+        break;
     case WM_SIZE:
         // ImGui doesn't need this, it reads the viewport size directly
         break;
@@ -317,8 +366,16 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT Message, WPARAM wParam, LPARAM lParam) 
         }
         break;
     }
-    
-    return CallWindowProc((WNDPROC)OldWndProc, hWnd, Message, wParam, lParam);
+def_window_proc:
+    HRESULT result = CallWindowProc((WNDPROC)OldWndProc, gw_window_handle, Message, wParam, lParam);
+
+    // Post WndProc
+    switch (Message) {
+    case WM_SIZE:
+        // Pass the resize event to imgui
+        GWToolbox::RepositionOverlay();
+    }
+    return result;
 }
 
 void GWToolbox::Initialize() {
@@ -406,11 +463,82 @@ void GWToolbox::Terminate() {
     if (GW::Map::GetInstanceType() != GW::Constants::InstanceType::Loading) {
         Log::Info("Bye!");
     }
+
+    // Terminate imgui overlay
+    ::UnregisterClass(imgui_window_class.lpszClassName, imgui_window_class.hInstance);
+
+    // TODO: Kill imgui d3d9
 }
 
-void GWToolbox::Draw(IDirect3DDevice9* device) {
+void GWToolbox::RepositionOverlay() {
+    if (!gw_window_handle) {
+        gw_window_handle = GW::MemoryMgr::GetGWWindowHandle();
+        ASSERT(gw_window_handle);
+    }
+    RECT client_rect;
+    ASSERT(GetClientRect(gw_window_handle, &client_rect));
+    POINT client_point = { 0, 0 };
+    ASSERT(ClientToScreen(gw_window_handle, &client_point));
+    if (!imgui_window_handle) {
+        HRESULT result = S_OK;
+        // Initialize imgui overlay
+        ::RegisterClassEx(&imgui_window_class);
+        imgui_window_handle = CreateWindowEx(WS_EX_TOPMOST | WS_EX_TRANSPARENT | WS_EX_LAYERED,
+            imgui_window_class.lpszClassName, 
+            "GWToolbox++ Overlay", 
+            WS_POPUP,
+            client_point.x, client_point.y, client_rect.right, client_rect.bottom, 
+            NULL, NULL, 
+            imgui_window_class.hInstance, NULL);
+        ASSERT(imgui_window_handle);
 
-    static HWND gw_window_handle = 0;
+        SetLayeredWindowAttributes(imgui_window_handle, imgui_mask, 0, LWA_COLORKEY);
+        ShowWindow(imgui_window_handle, SW_SHOWDEFAULT);
+        ASSERT(UpdateWindow(imgui_window_handle));
+        imgui_d3d9Ex = Direct3DCreate9(D3D_SDK_VERSION);
+        ASSERT(imgui_d3d9Ex);
+
+        memset(&imgui_d3dparams, 0, sizeof(D3DPRESENT_PARAMETERS));
+        imgui_d3dparams.Windowed = TRUE;
+        imgui_d3dparams.SwapEffect = D3DSWAPEFFECT_DISCARD;
+        imgui_d3dparams.BackBufferFormat = D3DFMT_A8R8G8B8; // Need to use an explicit format with alpha if needing per-pixel alpha composition.
+        imgui_d3dparams.EnableAutoDepthStencil = TRUE;
+        imgui_d3dparams.AutoDepthStencilFormat = D3DFMT_D16;
+        imgui_d3dparams.MultiSampleType = D3DMULTISAMPLE_NONE;
+        imgui_d3dparams.PresentationInterval = D3DPRESENT_INTERVAL_IMMEDIATE;   // Present without vsync, maximum unthrottled framerate
+
+        /*DWORD dwMSQAAQuality = 0;
+        result = imgui_d3d9Ex->CheckDeviceMultiSampleType(D3DADAPTER_DEFAULT, D3DDEVTYPE_HAL, D3DFMT_A8R8G8B8, true, D3DMULTISAMPLE_NONMASKABLE, &dwMSQAAQuality);
+        if (result != D3D_OK)
+        {
+            imgui_d3dparams.MultiSampleType = D3DMULTISAMPLE_NONMASKABLE;
+            imgui_d3dparams.MultiSampleQuality = dwMSQAAQuality - 1;
+        }*/
+
+        result = imgui_d3d9Ex->CreateDevice(D3DADAPTER_DEFAULT, D3DDEVTYPE_HAL, imgui_window_handle, D3DCREATE_HARDWARE_VERTEXPROCESSING, &imgui_d3dparams, &imgui_d3dDevice);
+        ASSERT(result == D3D_OK && imgui_d3dDevice);
+        // Show the window
+        //SetWindowLong(imgui_window_handle, GWL_HWNDPARENT, gw_window_handle);
+        SetWindowLong(imgui_window_handle, GWL_STYLE, 0);
+        ::ShowWindow(imgui_window_handle, SW_SHOWDEFAULT);
+        
+    }
+
+    ::SetWindowPos(imgui_window_handle, gw_window_handle, client_point.x, client_point.y, client_rect.right, client_rect.bottom, SWP_FRAMECHANGED);
+}
+void GWToolbox::DestroyOverlay() {
+    if (imgui_d3dDevice)
+        imgui_d3dDevice->Release();
+    if(imgui_d3d9Ex)
+        imgui_d3d9Ex->Release();
+    if (imgui_window_handle)
+        DestroyWindow(imgui_window_handle);
+    imgui_d3dDevice = NULL;
+    imgui_d3d9Ex = NULL;
+    imgui_window_handle = NULL;
+    UnregisterClass(imgui_window_class.lpszClassName, imgui_window_class.hInstance);
+}
+void GWToolbox::Draw(IDirect3DDevice9*) {
 
     // === initialization ===
     if (!tb_initialized && !GWToolbox::Instance().must_self_destruct) {
@@ -420,10 +548,12 @@ void GWToolbox::Draw(IDirect3DDevice9* device) {
         OldWndProc = SetWindowLongPtrW(gw_window_handle, GWL_WNDPROC, (long)SafeWndProc);
         Log::Log("Installed input event handler, oldwndproc = 0x%X\n", OldWndProc);
 
+        RepositionOverlay();
+
         ImGui::CreateContext();
         //ImGui_ImplDX9_Init(GW::MemoryMgr().GetGWWindowHandle(), device);
-        ImGui_ImplDX9_Init(device);
-        ImGui_ImplWin32_Init(GW::MemoryMgr().GetGWWindowHandle());
+        ImGui_ImplDX9_Init(imgui_d3dDevice);
+        ImGui_ImplWin32_Init(imgui_window_handle);
 
         ImGuiIO& io = ImGui::GetIO();
         io.MouseDrawCursor = false;
@@ -453,25 +583,22 @@ void GWToolbox::Draw(IDirect3DDevice9* device) {
         && GW::Render::GetViewportWidth() > 0
         && GW::Render::GetViewportHeight() > 0) {
 
-        if (!GW::UI::GetIsUIDrawn())
-            return;
+        bool do_render = GW::UI::GetIsUIDrawn()
+            && !GW::UI::GetIsWorldMapShowing()
+            && !GW::Map::GetIsInCinematic()
+            && !IsIconic(gw_window_handle)
+            && GuiUtils::FontsLoaded();
 
-        if (GW::UI::GetIsWorldMapShowing())
+        // @Cleanup: move render states out of draw loop?
+        imgui_d3dDevice->SetRenderState(D3DRS_ALPHABLENDENABLE, TRUE);
+        imgui_d3dDevice->SetRenderState(D3DRS_ALPHAFUNC, D3DCMP_GREATEREQUAL);
+        imgui_d3dDevice->SetRenderState(D3DRS_ALPHAREF, 0);
+        imgui_d3dDevice->Clear(0, 0, D3DCLEAR_TARGET, d3d_mask, 1.0f, 0);
+        if (!do_render)
             return;
-
-        if (GW::Map::GetIsInCinematic())
-            return;
-
-        if (IsIconic(GW::MemoryMgr::GetGWWindowHandle()))
-            return;
-
-        if (!GuiUtils::FontsLoaded())
-            return; // Fonts not loaded yet.
 
         ImGui_ImplDX9_NewFrame();
         ImGui_ImplWin32_NewFrame();
-
-        Minimap::Render(device);
 
         ImGui::NewFrame();
 
@@ -480,11 +607,14 @@ void GWToolbox::Draw(IDirect3DDevice9* device) {
         ImGui::GetIO().KeysDown[VK_CONTROL] = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
         ImGui::GetIO().KeysDown[VK_SHIFT] = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
         ImGui::GetIO().KeysDown[VK_MENU] = (GetKeyState(VK_MENU) & 0x8000) != 0;
-        Resources::Instance().DxUpdate(device);
+        Resources::Instance().DxUpdate(imgui_d3dDevice);
 
-        for (ToolboxUIElement* uielement : GWToolbox::Instance().uielements) {
-            uielement->Draw(device);
+        if (do_render) {
+            for (ToolboxUIElement* uielement : GWToolbox::Instance().uielements) {
+                uielement->Draw(imgui_d3dDevice);
+            }
         }
+
         //for (TBModule* mod : GWToolbox::Instance().plugins) {
         //    mod->Draw(device);
         //}
@@ -496,8 +626,22 @@ void GWToolbox::Draw(IDirect3DDevice9* device) {
 #endif
 
         ImGui::EndFrame();
-        ImGui::Render();
-        ImGui_ImplDX9_RenderDrawData(ImGui::GetDrawData());
+
+
+        if (imgui_d3dDevice->BeginScene() >= 0)
+        {
+            if (do_render) {
+                Minimap::Render(imgui_d3dDevice);
+                ImGui::Render();
+                ImGui_ImplDX9_RenderDrawData(ImGui::GetDrawData());
+            }
+            imgui_d3dDevice->EndScene();
+        }
+        HRESULT result = imgui_d3dDevice->Present(NULL, NULL, NULL, NULL);
+
+        // Handle loss of D3D9 device
+        if (result == D3DERR_DEVICELOST && imgui_d3dDevice->TestCooperativeLevel() == D3DERR_DEVICENOTRESET)
+            OverlayReset();
     }
 
     // === destruction ===
@@ -515,15 +659,15 @@ void GWToolbox::Draw(IDirect3DDevice9* device) {
         ImGui_ImplWin32_Shutdown();
         ImGui::DestroyContext();
 
+        
+
         Log::Log("Restoring input hook\n");
         SetWindowLongPtr(gw_window_handle, GWL_WNDPROC, (long)OldWndProc);
 
         GW::DisableHooks();
+        DestroyOverlay();
         tb_initialized = false;
         tb_destroyed = true;
-
-
-
     }
     if(tb_destroyed && defer_close) {
         // Toolbox was closed by a user closing GW - close it here for the by sending the `WM_CLOSE` message again.
