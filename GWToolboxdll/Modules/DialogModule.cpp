@@ -163,50 +163,7 @@ void DialogModule::Initialize() {
     }
 }
 void DialogModule::SendDialog(uint32_t dialog_id) {
-    const bool already_queued = queued_dialogs_to_send.contains(dialog_id);
-    queued_dialogs_to_send[dialog_id] = TIMER_INIT();
-    if (already_queued)
-        return; // Don't redo any logic.
-
-    if ((dialog_id & 0x800000) != 0) {
-        // Quest related dialog
-        const uint32_t quest_id = (dialog_id ^ 0x800000) >> 8;
-        switch ((dialog_id & 0xf)) {
-        case 1: // Dialog is for taking a quest
-            SendDialog(quest_id << 8 | 0x800003);
-            break;
-        case 7: // Dialog is for accepting a quest reward
-            SendDialog(quest_id << 8 | 0x800006);
-            break;
-        }
-        return;
-    }
-    if ((dialog_id & 0xf84) == dialog_id && ((dialog_id & 0xfff) >> 8) != 0) {
-        // Dialog is for changing profession; queue up the enquire dialog option aswell
-        const uint32_t profession_id = (dialog_id & 0xfff) >> 8;
-        const uint32_t enquire_dialog_id = (profession_id << 8) | 0x85;
-        SendDialog(enquire_dialog_id);
-        return;
-    }
-    switch (dialog_id) {
-    case GW::Constants::DialogID::UwTeleLab:
-    case GW::Constants::DialogID::UwTeleVale:
-    case GW::Constants::DialogID::UwTelePits:
-    case GW::Constants::DialogID::UwTelePools:
-    case GW::Constants::DialogID::UwTelePlanes:
-    case GW::Constants::DialogID::UwTeleWastes:
-    case GW::Constants::DialogID::UwTeleMnt: {
-        const auto dialog_agent = GW::Agents::GetAgentByID(GetDialogAgent());
-        if (dialog_agent 
-            && dialog_agent->type == static_cast<uint32_t>(GW::Constants::AgentType::Living)
-            && dialog_agent->GetAsAgentLiving()->player_number == GW::Constants::ModelID::UW::Reapers) {
-            // Reaper teleport dialog; queue up prerequisites.
-            SendDialog(0x7f);
-            SendDialog(dialog_id - 0x7);
-        }
-    } break;
-        
-    }
+    GW::Agents::SendDialog(dialog_id);
 }
 
 void DialogModule::SendDialogs(std::initializer_list<uint32_t> dialog_ids) {
