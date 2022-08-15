@@ -1719,17 +1719,8 @@ void ChatCommands::TargetNearest(const wchar_t* model_id_or_name, TargetType typ
     size_t closest = 0;
     size_t count = 0;
 
-    auto is_npc_targettable = [](const GW::AgentLiving* agent) {
-        if (!(agent && agent->IsNPC()))
-            return true;
-        const GW::NPC* npc = GW::Agents::GetNPCByID(agent->player_number);
-        return npc && (npc->npc_flags & 0x10000) == 0;
-    };
-
     for (const GW::Agent * agent : *agents) {
         if (!agent || agent == me)
-            continue;
-        if (!is_npc_targettable(agent->GetAsAgentLiving()))
             continue;
         switch (type) {
             case Gadget: {
@@ -1757,24 +1748,6 @@ void ChatCommands::TargetNearest(const wchar_t* model_id_or_name, TargetType typ
                 // Target player by player number
                 const GW::AgentLiving* const living_agent = agent->GetAsAgentLiving();
                 if (!living_agent || !living_agent->IsPlayer() || (model_id && living_agent->player_number != model_id))
-                    continue;
-            } break;
-            case Ally: {
-                // Target any living ally
-                // NB: Not quite the same as the GW version; 
-                // GW targets nearest player if they're less than half the distance as the nearest agent.
-                // Could be a little confusing if this is used instead of 'V' in-game.
-                const GW::AgentLiving* const living_agent = agent->GetAsAgentLiving();
-                if (!living_agent 
-                    || living_agent->allegiance == GW::Constants::Allegiance::Enemy 
-                    || living_agent->allegiance == GW::Constants::Allegiance::Neutral
-                    || !living_agent->GetIsAlive() || (model_id && living_agent->player_number != model_id))
-                    continue;
-            } break;
-            case Enemy: {
-                // Target any living enemy
-                const GW::AgentLiving* const living_agent = agent->GetAsAgentLiving();
-                if (!living_agent || living_agent->allegiance != GW::Constants::Allegiance::Enemy || !living_agent->GetIsAlive() || (model_id && living_agent->player_number != model_id))
                     continue;
             } break;
             case Living: {
