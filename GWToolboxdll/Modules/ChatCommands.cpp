@@ -6,64 +6,63 @@
 #include <GWCA/GameContainers/Array.h>
 #include <GWCA/GameContainers/GamePos.h>
 
+#include <GWCA/GameEntities/Agent.h>
+#include <GWCA/GameEntities/Friendslist.h>
+#include <GWCA/GameEntities/Guild.h>
+#include <GWCA/GameEntities/Hero.h>
+#include <GWCA/GameEntities/Item.h>
 #include <GWCA/GameEntities/Map.h>
 #include <GWCA/GameEntities/NPC.h>
-#include <GWCA/GameEntities/Agent.h>
-#include <GWCA/GameEntities/Guild.h>
-#include <GWCA/GameEntities/Skill.h>
 #include <GWCA/GameEntities/Player.h>
-#include <GWCA/GameEntities/Item.h>
 #include <GWCA/GameEntities/Quest.h>
+#include <GWCA/GameEntities/Skill.h>
 #include <GWCA/GameEntities/Title.h>
-#include <GWCA/GameEntities/Friendslist.h>
-#include <GWCA/GameEntities/Hero.h>
 
 #include <GWCA/Context/GameContext.h>
-#include <GWCA/Context/WorldContext.h>
 #include <GWCA/Context/GuildContext.h>
 #include <GWCA/Context/PartyContext.h>
+#include <GWCA/Context/WorldContext.h>
 
-#include <GWCA/Managers/MapMgr.h>
-#include <GWCA/Managers/ChatMgr.h>
-#include <GWCA/Managers/ItemMgr.h>
-#include <GWCA/Managers/StoCMgr.h>
 #include <GWCA/Managers/AgentMgr.h>
-#include <GWCA/Managers/GuildMgr.h>
 #include <GWCA/Managers/CameraMgr.h>
-#include <GWCA/Managers/MemoryMgr.h>
-#include <GWCA/Managers/PlayerMgr.h>
-#include <GWCA/Managers/SkillbarMgr.h>
+#include <GWCA/Managers/ChatMgr.h>
 #include <GWCA/Managers/FriendListMgr.h>
 #include <GWCA/Managers/GameThreadMgr.h>
+#include <GWCA/Managers/GuildMgr.h>
+#include <GWCA/Managers/ItemMgr.h>
+#include <GWCA/Managers/MapMgr.h>
+#include <GWCA/Managers/MemoryMgr.h>
 #include <GWCA/Managers/PartyMgr.h>
+#include <GWCA/Managers/PlayerMgr.h>
+#include <GWCA/Managers/SkillbarMgr.h>
+#include <GWCA/Managers/StoCMgr.h>
 #include <GWCA/Managers/TradeMgr.h>
 
 #include <GWCA/Utilities/Scanner.h>
 
-#include <Utils/GuiUtils.h>
 #include <GWToolbox.h>
 #include <Keys.h>
 #include <Logger.h>
+#include <Utils/GuiUtils.h>
 
 #include <Modules/ChatCommands.h>
-#include <Modules/ObserverModule.h>
+#include <Modules/DialogModule.h>
 #include <Modules/GameSettings.h>
+#include <Modules/HallOfMonumentsModule.h>
+#include <Modules/ObserverModule.h>
 #include <Widgets/PartyDamage.h>
+#include <Widgets/TimerWidget.h>
 #include <Windows/BuildsWindow.h>
 #include <Windows/Hotkeys.h>
 #include <Windows/MainWindow.h>
 #include <Windows/SettingsWindow.h>
-#include <Widgets/TimerWidget.h>
-#include <Modules/HallOfMonumentsModule.h>
-#include <Modules/DialogModule.h>
-
 
 #define F_PI 3.14159265358979323846f
 #define CMDTITLE_KEEP_CURRENT 0xfffe
 #define CMDTITLE_REMOVE_CURRENT 0xffff
 
 namespace {
-    const wchar_t *next_word(const wchar_t *str) {
+    const wchar_t* next_word(const wchar_t* str) {
         while (*str && !isspace(*str))
             str++;
         while (*str && isspace(*str))
@@ -71,24 +70,27 @@ namespace {
         return *str ? str : NULL;
     }
 
-    static bool IsMapReady()
-    {
-        return GW::Map::GetInstanceType() != GW::Constants::InstanceType::Loading && !GW::Map::GetIsObserving() && GW::MemoryMgr::GetGWWindowHandle() == GetActiveWindow();
+    static bool IsMapReady() {
+        return GW::Map::GetInstanceType() != GW::Constants::InstanceType::Loading && !GW::Map::GetIsObserving() &&
+               GW::MemoryMgr::GetGWWindowHandle() == GetActiveWindow();
     }
+    bool IsExplorable() { return GW::Map::GetInstanceType() == GW::Constants::InstanceType::Explorable; }
     bool ImInPresearing() { return GW::Map::GetCurrentMapInfo()->region == GW::Region_Presearing; }
 
     static const float GetAngle(GW::GamePos pos) {
         const float pi = static_cast<float>(M_PI);
         float tan_angle = 0.0f;
         if (pos.x == 0.0f) {
-            if (pos.y >= 0.0f) tan_angle = F_PI / 2;
-            else tan_angle = (pi / 2) * -1.0f;
-        }
-        else if (pos.x < 0.0f) {
-            if (pos.y >= 0.0f) tan_angle = atan(pos.y / pos.x) + F_PI;
-            else tan_angle = atan(pos.y / pos.x) - pi;
-        }
-        else {
+            if (pos.y >= 0.0f)
+                tan_angle = F_PI / 2;
+            else
+                tan_angle = (pi / 2) * -1.0f;
+        } else if (pos.x < 0.0f) {
+            if (pos.y >= 0.0f)
+                tan_angle = atan(pos.y / pos.x) + F_PI;
+            else
+                tan_angle = atan(pos.y / pos.x) - pi;
+        } else {
             tan_angle = atan(pos.y / pos.x);
         }
         tan_angle *= 180.0f / pi;
@@ -108,15 +110,12 @@ namespace {
         size_t closest = static_cast<size_t>(-1);
         for (size_t i = 0, size = agents->size(); i < size; ++i) {
             const GW::AgentLiving* const agent = static_cast<GW::AgentLiving*>(agents->at(i));
-            if (agent == nullptr || agent == me || !agent->GetIsLivingType() || agent->GetIsDead())
-                continue;
+            if (agent == nullptr || agent == me || !agent->GetIsLivingType() || agent->GetIsDead()) continue;
             const float this_distance = GW::GetSquareDistance(me->pos, agent->pos);
-            if (this_distance > max_distance)
-                continue;
+            if (this_distance > max_distance) continue;
             const float agent_angle = GetAngle(me->pos - agent->pos);
             const float this_angle_diff = abs(wanted_angle - agent_angle);
-            if (this_angle_diff > max_angle_diff)
-                continue;
+            if (this_angle_diff > max_angle_diff) continue;
             closest = i;
             max_distance = this_distance;
         }
@@ -139,17 +138,14 @@ namespace {
         size_t closest = static_cast<size_t>(-1);
         for (size_t i = 0, size = agents->size(); i < size; ++i) {
             const GW::AgentLiving* const agent = static_cast<GW::AgentLiving*>(agents->at(i));
-            if (agent == nullptr || agent == me
-                || !agent->GetIsLivingType() || agent->GetIsDead()
-                || agent->allegiance == GW::Constants::Allegiance::Enemy)
+            if (agent == nullptr || agent == me || !agent->GetIsLivingType() || agent->GetIsDead() ||
+                agent->allegiance == GW::Constants::Allegiance::Enemy)
                 continue;
             const float this_distance = GW::GetSquareDistance(me->pos, agent->pos);
-            if (this_distance > max_distance || distance > this_distance)
-                continue;
+            if (this_distance > max_distance || distance > this_distance) continue;
             const float agent_angle = GetAngle(me->pos - agent->pos);
             const float this_angle_diff = abs(wanted_angle - agent_angle);
-            if (this_angle_diff > max_angle_diff)
-                continue;
+            if (this_angle_diff > max_angle_diff) continue;
             closest = i;
             distance = this_distance;
         }
@@ -165,13 +161,14 @@ namespace {
     static std::map<std::string, ChatCommands::PendingTransmo> npc_transmos;
 
     struct DecodedTitleName {
-        DecodedTitleName(GW::Constants::TitleID in) : title(in) {
+        DecodedTitleName(GW::Constants::TitleID in)
+            : title(in) {
             name.reset(GW::PlayerMgr::GetTitleData(title)->name_id);
         };
         GW::Constants::TitleID title;
         GuiUtils::EncString name;
     };
-    static std::vector< DecodedTitleName*> title_names;
+    static std::vector<DecodedTitleName*> title_names;
     static bool title_names_sorted = false;
 
     GW::Array<GW::Title>* GetTitles() {
@@ -188,7 +185,6 @@ namespace {
     bool* is_muted = 0;
 
     void CmdSkillImage(const wchar_t*, int, LPWSTR* argv) {
-
         uint32_t skill_id = 0;
         GuiUtils::ParseUInt(argv[1], &skill_id);
         GW::Packet::StoC::UpdateSkillbarSkill* s = new GW::Packet::StoC::UpdateSkillbarSkill();
@@ -198,7 +194,7 @@ namespace {
         GW::GameThread::Enqueue([s]() {
             GW::StoC::EmulatePacket(s);
             delete s;
-            });
+        });
     }
 
     HallOfMonumentsAchievements hom_achievements;
@@ -206,21 +202,17 @@ namespace {
 
 } // namespace
 
-void ChatCommands::TransmoAgent(DWORD agent_id, PendingTransmo& transmo)
-{
-    if (!transmo.npc_id || !agent_id)
-        return;
+void ChatCommands::TransmoAgent(DWORD agent_id, PendingTransmo& transmo) {
+    if (!transmo.npc_id || !agent_id) return;
     const GW::AgentLiving* const a = static_cast<GW::AgentLiving*>(GW::Agents::GetAgentByID(agent_id));
-    if (!a || !a->GetIsLivingType())
-        return;
-    DWORD &npc_id = transmo.npc_id;
-    DWORD &scale = transmo.scale;
-    const GW::NPCArray &npcs = GW::GameContext::instance()->world->npcs;
+    if (!a || !a->GetIsLivingType()) return;
+    DWORD& npc_id = transmo.npc_id;
+    DWORD& scale = transmo.scale;
+    const GW::NPCArray& npcs = GW::GameContext::instance()->world->npcs;
     if (npc_id == INT_MAX - 1) {
         // Scale only
         npc_id = a->player_number;
-        if (a->transmog_npc_id & 0x20000000)
-            npc_id = a->transmog_npc_id ^ 0x20000000;
+        if (a->transmog_npc_id & 0x20000000) npc_id = a->transmog_npc_id ^ 0x20000000;
     } else if (npc_id == INT_MAX) {
         // Reset
         npc_id = 0;
@@ -229,8 +221,7 @@ void ChatCommands::TransmoAgent(DWORD agent_id, PendingTransmo& transmo)
         const DWORD& npc_model_file_id = transmo.npc_model_file_id;
         const DWORD& npc_model_file_data = transmo.npc_model_file_data;
         const DWORD& flags = transmo.flags;
-        if (!npc_model_file_id)
-            return;
+        if (!npc_model_file_id) return;
         // Need to create the NPC.
         // Those 2 packets (P074 & P075) are used to create a new model, for instance if we want to "use" a tonic.
         // We have to find the data that are in the NPC structure and feed them to those 2 packets.
@@ -268,8 +259,7 @@ void ChatCommands::TransmoAgent(DWORD agent_id, PendingTransmo& transmo)
         if (npc_id) {
             const GW::NPCArray& npcs = GW::GameContext::instance()->world->npcs;
             const GW::NPC npc = npcs[npc_id];
-            if (!npc.model_file_id)
-                return;
+            if (!npc.model_file_id) return;
         }
         GW::Packet::StoC::AgentScale packet1;
         packet1.header = GW::Packet::StoC::AgentScale::STATIC_HEADER;
@@ -285,19 +275,16 @@ void ChatCommands::TransmoAgent(DWORD agent_id, PendingTransmo& transmo)
     });
 }
 
-bool ChatCommands::GetNPCInfoByName(const std::string name, PendingTransmo& transmo)
-{
+bool ChatCommands::GetNPCInfoByName(const std::string name, PendingTransmo& transmo) {
     for (const auto& npc_transmo : npc_transmos) {
         const size_t found_len = npc_transmo.first.find(name);
-        if (found_len == std::string::npos)
-            continue;
+        if (found_len == std::string::npos) continue;
         transmo = npc_transmo.second;
         return true;
     }
     return false;
 }
-bool ChatCommands::GetNPCInfoByName(const std::wstring name, PendingTransmo &transmo)
-{
+bool ChatCommands::GetNPCInfoByName(const std::wstring name, PendingTransmo& transmo) {
     return GetNPCInfoByName(GuiUtils::WStringToString(name), transmo);
 }
 
@@ -305,90 +292,133 @@ void ChatCommands::DrawHelp() {
     if (!ImGui::TreeNodeEx("Chat Commands", ImGuiTreeNodeFlags_FramePadding | ImGuiTreeNodeFlags_SpanAvailWidth))
         return;
 
-
     ImGui::Text("You can create a 'Send Chat' hotkey to perform any command.");
     ImGui::TextDisabled("Below, <xyz> denotes an argument, use an appropriate value without the quotes.\n"
-        "(a|b) denotes a mandatory argument, in this case 'a' or 'b'.\n"
-        "[a|b] denotes an optional argument, in this case nothing, 'a' or 'b'.");
+                        "(a|b) denotes a mandatory argument, in this case 'a' or 'b'.\n"
+                        "[a|b] denotes an optional argument, in this case nothing, 'a' or 'b'.");
 
-    ImGui::Bullet(); ImGui::Text("'/age2' prints the instance time to chat.");
-    ImGui::Bullet(); ImGui::Text("'/animation [me|target] [animation_id (1-2076)]' to make you (or a target) do a specific animation");
-    ImGui::Bullet(); ImGui::Text("'/armor' is an alias for '/pingitem armor'.");
-    ImGui::Bullet(); ImGui::Text("'/borderless [on|off]' toggles, enables or disables borderless window.");
-    ImGui::Bullet(); ImGui::Text("'/camera (lock|unlock)' to lock or unlock the camera.");
-    ImGui::Bullet(); ImGui::Text("'/camera fog (on|off)' sets game fog effect on or off.");
-    ImGui::Bullet(); ImGui::Text("'/camera fov <value>' sets the field of view. '/camera fov' resets to default.");
-    ImGui::Bullet(); ImGui::Text("'/camera speed <value>' sets the unlocked camera speed.");
-    ImGui::Bullet(); ImGui::Text("'/chest' opens xunlai in outposts.");
-    ImGui::Bullet(); ImGui::Text("'/damage' or '/dmg' to print party damage to chat.\n"
-        "'/damage me' sends your own damage only.\n"
-        "'/damage <number>' sends the damage of a party member (e.g. '/damage 3').\n"
-        "'/damage reset' resets the damage in party window.");
-    ImGui::Bullet(); ImGui::Text("'/dialog <id>' sends a dialog id to the current NPC you're talking to.\n"
-        "'/dailog take' automatically takes the first available quest/reward from the NPC you're talking to.");
-    ImGui::Bullet(); ImGui::Text("'/enter [fow|uw]' to enter the mission for your outpost.\n"
-        "If in embark, toa, urgoz or deep, it will use a scroll.\n"
-        "If in an outpost with an available mission, it will begin the mission countdown.");
-    ImGui::Bullet(); ImGui::Text("'/ff' alias for '/resign'");
-    ImGui::Bullet(); ImGui::Text("'/flag [all|clear|<number>]' to flag a hero in the minimap (same as using the buttons by the minimap).");
-    ImGui::Bullet(); ImGui::Text("'/flag [all|<number>] [x] [y]' to flag a hero to coordinates [x],[y].");
-    ImGui::Bullet(); ImGui::Text("'/flag <number> clear' to clear flag for a hero.");
-    ImGui::Bullet(); ImGui::Text("'/hero [avoid|guard|attack]' to set your hero behavior in an explorable area.");
+    ImGui::Bullet();
+    ImGui::Text("'/age2' prints the instance time to chat.");
+    ImGui::Bullet();
+    ImGui::Text("'/animation [me|target] [animation_id (1-2076)]' to make you (or a target) do a specific animation");
+    ImGui::Bullet();
+    ImGui::Text("'/armor' is an alias for '/pingitem armor'.");
+    ImGui::Bullet();
+    ImGui::Text("'/borderless [on|off]' toggles, enables or disables borderless window.");
+    ImGui::Bullet();
+    ImGui::Text("'/camera (lock|unlock)' to lock or unlock the camera.");
+    ImGui::Bullet();
+    ImGui::Text("'/camera fog (on|off)' sets game fog effect on or off.");
+    ImGui::Bullet();
+    ImGui::Text("'/camera fov <value>' sets the field of view. '/camera fov' resets to default.");
+    ImGui::Bullet();
+    ImGui::Text("'/camera speed <value>' sets the unlocked camera speed.");
+    ImGui::Bullet();
+    ImGui::Text("'/chest' opens xunlai in outposts.");
+    ImGui::Bullet();
+    ImGui::Text("'/damage' or '/dmg' to print party damage to chat.\n"
+                "'/damage me' sends your own damage only.\n"
+                "'/damage <number>' sends the damage of a party member (e.g. '/damage 3').\n"
+                "'/damage reset' resets the damage in party window.");
+    ImGui::Bullet();
+    ImGui::Text("'/dialog <id>' sends a dialog id to the current NPC you're talking to.\n"
+                "'/dailog take' automatically takes the first available quest/reward from the NPC you're talking to.");
+    ImGui::Bullet();
+    ImGui::Text("'/enter [fow|uw]' to enter the mission for your outpost.\n"
+                "If in embark, toa, urgoz or deep, it will use a scroll.\n"
+                "If in an outpost with an available mission, it will begin the mission countdown.");
+    ImGui::Bullet();
+    ImGui::Text("'/ff' alias for '/resign'");
+    ImGui::Bullet();
+    ImGui::Text(
+        "'/flag [all|clear|<number>]' to flag a hero in the minimap (same as using the buttons by the minimap).");
+    ImGui::Bullet();
+    ImGui::Text("'/flag [all|<number>] [x] [y]' to flag a hero to coordinates [x],[y].");
+    ImGui::Bullet();
+    ImGui::Text("'/flag <number> clear' to clear flag for a hero.");
+    ImGui::Bullet();
+    ImGui::Text("'/hero [avoid|guard|attack]' to set your hero behavior in an explorable area.");
     const char* toggle_hint = "<name> options: helm, costume, costume_head, cape, <window_or_widget_name>";
-    ImGui::Bullet(); ImGui::Text("'/hide <name>' closes the window, in-game feature or widget titled <name>.");
+    ImGui::Bullet();
+    ImGui::Text("'/hide <name>' closes the window, in-game feature or widget titled <name>.");
     ImGui::ShowHelp(toggle_hint);
-    ImGui::Bullet(); ImGui::Text("'/hm' or '/hardmode' to set hard mode difficulty in an outpost.");
-    ImGui::Bullet(); ImGui::Text("'/hom' opens the Hall of Monuments calculator with the current target player's achievements.");
-    ImGui::Bullet(); ImGui::Text("'/load [build template|build name] [Hero index]' loads a build. The build name must be between quotes if it contains spaces. First Hero index is 1, last is 7. Leave out for player");
-    ImGui::Bullet(); ImGui::Text("'/nm' or '/normalmode' to set normal mode difficulty in an outpost.");
-    ImGui::Bullet(); ImGui::Text("'/morale' to send your current morale/death penalty info to team chat.");
-    ImGui::Bullet(); ImGui::Text("'/observer:reset' resets observer mode data.");
-    ImGui::Bullet(); ImGui::Text("'/pingitem <equipped_item>' to ping your equipment in chat.\n"
-        "<equipped_item> options: armor, head, chest, legs, boots, gloves, offhand, weapon, weapons, costume");
-    ImGui::Bullet(); ImGui::Text("'/pcons [on|off]' toggles, enables or disables pcons.");
-    ImGui::Bullet(); ImGui::Text("'/resize <width> <height>' resize the GW window");
-    ImGui::Bullet(); ImGui::Text("'/scwiki [<search_term>]' search http://wiki.fbgmguild.com.");
-    ImGui::Bullet(); ImGui::Text("'/show <name>' opens the window, in-game feature or widget titled <name>.");
+    ImGui::Bullet();
+    ImGui::Text("'/hm' or '/hardmode' to set hard mode difficulty in an outpost.");
+    ImGui::Bullet();
+    ImGui::Text("'/hom' opens the Hall of Monuments calculator with the current target player's achievements.");
+    ImGui::Bullet();
+    ImGui::Text(
+        "'/load [build template|build name] [Hero index]' loads a build. The build name must be between quotes if it contains spaces. First Hero index is 1, last is 7. Leave out for player");
+    ImGui::Bullet();
+    ImGui::Text("'/nm' or '/normalmode' to set normal mode difficulty in an outpost.");
+    ImGui::Bullet();
+    ImGui::Text("'/morale' to send your current morale/death penalty info to team chat.");
+    ImGui::Bullet();
+    ImGui::Text("'/observer:reset' resets observer mode data.");
+    ImGui::Bullet();
+    ImGui::Text("'/pingitem <equipped_item>' to ping your equipment in chat.\n"
+                "<equipped_item> options: armor, head, chest, legs, boots, gloves, offhand, weapon, weapons, costume");
+    ImGui::Bullet();
+    ImGui::Text("'/pcons [on|off]' toggles, enables or disables pcons.");
+    ImGui::Bullet();
+    ImGui::Text("'/resize <width> <height>' resize the GW window");
+    ImGui::Bullet();
+    ImGui::Text("'/scwiki [<search_term>]' search http://wiki.fbgmguild.com.");
+    ImGui::Bullet();
+    ImGui::Text("'/show <name>' opens the window, in-game feature or widget titled <name>.");
     ImGui::ShowHelp(toggle_hint);
-    ImGui::Bullet(); ImGui::Text("'/toggle <name> [on|off|toggle]' toggles the window, in-game feature or widget titled <name>.");
+    ImGui::Bullet();
+    ImGui::Text("'/toggle <name> [on|off|toggle]' toggles the window, in-game feature or widget titled <name>.");
     ImGui::ShowHelp(toggle_hint);
-    ImGui::Bullet(); ImGui::Text("'/target closest' to target the closest agent to you.\n"
+    ImGui::Bullet();
+    ImGui::Text(
+        "'/target closest' to target the closest agent to you.\n"
         "'/target ee' to target best ebon escape agent.\n"
         "'/target hos' to target best vipers/hos agent.\n"
         "'/target [name|model_id] [index]' target nearest NPC by name or model_id. \n\tIf index is specified, it will target index-th by ID.\n"
         "'/target player [name|player_number]' target nearest player by name or player number.\n"
         "'/target gadget [name|gadget_id]' target nearest interactive object by name or gadget_id.\n"
         "'/target priority [partymember]' to target priority target of party member.");
-    ImGui::Bullet(); ImGui::Text("'/tb <name>' toggles the window or widget titled <name>.");
-    ImGui::Bullet(); ImGui::Text("'/tb reset' moves Toolbox and Settings window to the top-left corner.");
-    ImGui::Bullet(); ImGui::Text("'/tb quit' or '/tb exit' completely closes toolbox and all its windows.");
+    ImGui::Bullet();
+    ImGui::Text("'/tb <name>' toggles the window or widget titled <name>.");
+    ImGui::Bullet();
+    ImGui::Text("'/tb reset' moves Toolbox and Settings window to the top-left corner.");
+    ImGui::Bullet();
+    ImGui::Text("'/tb quit' or '/tb exit' completely closes toolbox and all its windows.");
     const char* transmo_hint = "<npc_name> options: eye, zhu, kuunavang, beetle, polar, celepig, \n"
-        "  destroyer, koss, bonedragon, smite, kanaxai, skeletonic, moa";
-    ImGui::Bullet(); ImGui::Text("'/transmo <npc_name> [size (6-255)]' to change your appearance into an NPC.\n"
-        "'/transmo' to change your appearance into target NPC.\n"
-        "'/transmo reset' to reset your appearance.");
+                               "  destroyer, koss, bonedragon, smite, kanaxai, skeletonic, moa";
+    ImGui::Bullet();
+    ImGui::Text("'/transmo <npc_name> [size (6-255)]' to change your appearance into an NPC.\n"
+                "'/transmo' to change your appearance into target NPC.\n"
+                "'/transmo reset' to reset your appearance.");
     ImGui::ShowHelp(transmo_hint);
-    ImGui::Bullet(); ImGui::Text("'/transmoparty <npc_name> [size (6-255)]' to change your party's appearance into an NPC.\n"
-        "'/transmoparty' to change your party's appearance into target NPC.\n"
-        "'/transmoparty reset' to reset your party's appearance.");
+    ImGui::Bullet();
+    ImGui::Text("'/transmoparty <npc_name> [size (6-255)]' to change your party's appearance into an NPC.\n"
+                "'/transmoparty' to change your party's appearance into target NPC.\n"
+                "'/transmoparty reset' to reset your party's appearance.");
     ImGui::ShowHelp(transmo_hint);
-    ImGui::Bullet(); ImGui::Text("'/transmotarget <npc_name> [size (6-255)]' to change your target's appearance into an NPC.\n"
-        "'/transmotarget reset' to reset your target's appearance.");
+    ImGui::Bullet();
+    ImGui::Text("'/transmotarget <npc_name> [size (6-255)]' to change your target's appearance into an NPC.\n"
+                "'/transmotarget reset' to reset your target's appearance.");
     ImGui::ShowHelp(transmo_hint);
-    ImGui::Bullet(); ImGui::Text("'/travel <town> [dis]', '/tp <town> [dis]' or '/to <town> [dis]' travel to outpost best matching <town> name. \n"
+    ImGui::Bullet();
+    ImGui::Text(
+        "'/travel <town> [dis]', '/tp <town> [dis]' or '/to <town> [dis]' travel to outpost best matching <town> name. \n"
         "[dis] can be any of: ae, ae1, ee, eg, int, etc");
-    ImGui::Bullet(); ImGui::Text("'/useskill <skill>' starts using the skill on recharge. "
-        "Use the skill number instead of <skill> (e.g. '/useskill 5'). "
-        "Use empty '/useskill' or '/useskill stop' to stop all. "
-        "Use '/useskill <skill>' to stop the skill.");
-    ImGui::Bullet(); ImGui::Text("'/volume [master|music|background|effects|dialog|ui] <amount (0-100)>' set in-game volume.");
-    ImGui::Bullet(); ImGui::Text("'/wiki [quest|<search_term>]' search GWW for current quest or search term. By default, will search for the current map.");
+    ImGui::Bullet();
+    ImGui::Text("'/useskill <skill>' starts using the skill on recharge. "
+                "Use the skill number instead of <skill> (e.g. '/useskill 5'). "
+                "Use empty '/useskill' or '/useskill stop' to stop all. "
+                "Use '/useskill <skill>' to stop the skill.");
+    ImGui::Bullet();
+    ImGui::Text("'/volume [master|music|background|effects|dialog|ui] <amount (0-100)>' set in-game volume.");
+    ImGui::Bullet();
+    ImGui::Text(
+        "'/wiki [quest|<search_term>]' search GWW for current quest or search term. By default, will search for the current map.");
     ImGui::TreePop();
 }
 
-ChatCommands::ChatCommands() {
-    default_title_id = (uint32_t)GW::Constants::TitleID::Lightbringer;
-}
+ChatCommands::ChatCommands() { default_title_id = (uint32_t)GW::Constants::TitleID::Lightbringer; }
 
 ChatCommands::~ChatCommands() {
     for (auto* it : title_names) {
@@ -405,24 +435,21 @@ void ChatCommands::DrawSettingInternal() {
     ImGui::Unindent();
     std::string preview = "Select...";
     switch (default_title_id) {
-    case CMDTITLE_KEEP_CURRENT:
-        preview = "Keep current title";
-        break;
-    case CMDTITLE_REMOVE_CURRENT:
-        preview = "Remove title";
-        break;
-    default:
-        const auto selected = std::find_if(title_names.begin(), title_names.end(), [&](auto* it) { return (uint32_t)it->title == default_title_id; });
+        case CMDTITLE_KEEP_CURRENT: preview = "Keep current title"; break;
+        case CMDTITLE_REMOVE_CURRENT: preview = "Remove title"; break;
+        default:
+            const auto selected = std::find_if(title_names.begin(), title_names.end(),
+                [&](auto* it) { return (uint32_t)it->title == default_title_id; });
 
-        if (selected != title_names.end()) {
-            preview = (*selected)->name.string();
-        }
-        break;
+            if (selected != title_names.end()) {
+                preview = (*selected)->name.string();
+            }
+            break;
     }
 
-
     ImGui::Text("Default '/title' command fallback action");
-    ImGui::ShowHelp("Toolbox will reapply this title if there isn't an approriate title for the area you're in.\nIf your current character doesn't have the selected title, nothing will happen.");
+    ImGui::ShowHelp(
+        "Toolbox will reapply this title if there isn't an approriate title for the area you're in.\nIf your current character doesn't have the selected title, nothing will happen.");
     ImGui::Indent();
     if (ImGui::BeginCombo("###title_command_fallback", preview.c_str())) {
         if (ImGui::Selectable("Keep current title", CMDTITLE_KEEP_CURRENT == default_title_id)) {
@@ -439,7 +466,6 @@ void ChatCommands::DrawSettingInternal() {
         ImGui::EndCombo();
     }
     ImGui::Unindent();
-
 }
 
 void ChatCommands::LoadSettings(CSimpleIni* ini) {
@@ -454,46 +480,29 @@ void ChatCommands::SaveSettings(CSimpleIni* ini) {
     ini->SetLongValue(Name(), VAR_NAME(default_title_id), default_title_id);
 }
 
-void ChatCommands::CmdPingQuest(const wchar_t* , int , LPWSTR* ) {
-    Instance().quest_ping.Init();
-}
+void ChatCommands::CmdPingQuest(const wchar_t*, int, LPWSTR*) { Instance().quest_ping.Init(); }
 
 void ChatCommands::Initialize() {
     ToolboxModule::Initialize();
     const DWORD def_scale = 0x64000000;
     // Available Transmo NPCs
     // @Enhancement: Ability to target an NPC in-game and add it to this list via a GUI
-    npc_transmos = {
-        {"charr", {163, def_scale, 0x0004c409, 0, 98820}},
-        {"reindeer", {5, def_scale, 277573, 277576, 32780}},
-        {"gwenpre", {244, def_scale, 116377, 116759, 98820}},
-        {"gwenchan", {245, def_scale, 116377, 283392, 98820}},
-        {"eye", {0x1f4, def_scale, 0x9d07, 0, 0}},
-        {"zhu", {298, def_scale, 170283, 170481, 98820}},
-        {"kuunavang", {309, def_scale, 157438, 157527, 98820}},
-        {"beetle", {329, def_scale, 207331, 279211, 98820}},
-        {"polar", {313, def_scale, 277551, 277556, 98820}},
-        {"celepig", {331, def_scale, 279205, 0, 0}},
-        {"mallyx", {315, def_scale, 243812, 0, 98820}},
-        {"bonedragon", {231, def_scale, 16768, 0, 0}},
-        {"destroyer", {312, def_scale, 285891, 285900, 98820}},
-        {"destroyer2", {146, def_scale, 285886, 285890, 32780}},
-        {"koss", {250, def_scale, 243282, 245053, 98820}},
-        {"smite", {346, def_scale, 129664, 0, 98820}},
-        {"dorian", {8299, def_scale, 86510, 0, 98820}},
-        {"kanaxai", {317, def_scale, 184176, 185319, 98820}},
-        {"skeletonic", {359, def_scale, 52356, 0, 98820}},
-        {"moa", {504, def_scale, 16689, 0, 98820}}
-    };
+    npc_transmos = {{"charr", {163, def_scale, 0x0004c409, 0, 98820}},
+        {"reindeer", {5, def_scale, 277573, 277576, 32780}}, {"gwenpre", {244, def_scale, 116377, 116759, 98820}},
+        {"gwenchan", {245, def_scale, 116377, 283392, 98820}}, {"eye", {0x1f4, def_scale, 0x9d07, 0, 0}},
+        {"zhu", {298, def_scale, 170283, 170481, 98820}}, {"kuunavang", {309, def_scale, 157438, 157527, 98820}},
+        {"beetle", {329, def_scale, 207331, 279211, 98820}}, {"polar", {313, def_scale, 277551, 277556, 98820}},
+        {"celepig", {331, def_scale, 279205, 0, 0}}, {"mallyx", {315, def_scale, 243812, 0, 98820}},
+        {"bonedragon", {231, def_scale, 16768, 0, 0}}, {"destroyer", {312, def_scale, 285891, 285900, 98820}},
+        {"destroyer2", {146, def_scale, 285886, 285890, 32780}}, {"koss", {250, def_scale, 243282, 245053, 98820}},
+        {"smite", {346, def_scale, 129664, 0, 98820}}, {"dorian", {8299, def_scale, 86510, 0, 98820}},
+        {"kanaxai", {317, def_scale, 184176, 185319, 98820}}, {"skeletonic", {359, def_scale, 52356, 0, 98820}},
+        {"moa", {504, def_scale, 16689, 0, 98820}}};
 
     // you can create commands here in-line with a lambda, but only if they are only
     // a couple of lines and not used multiple times
-    GW::Chat::CreateCommand(L"ff", [](const wchar_t*, int, LPWSTR*) {
-        GW::Chat::SendChat('/', "resign");
-    });
-    GW::Chat::CreateCommand(L"gh", [](const wchar_t*, int, LPWSTR*) {
-        GW::Chat::SendChat('/', "tp gh");
-    });
+    GW::Chat::CreateCommand(L"ff", [](const wchar_t*, int, LPWSTR*) { GW::Chat::SendChat('/', "resign"); });
+    GW::Chat::CreateCommand(L"gh", [](const wchar_t*, int, LPWSTR*) { GW::Chat::SendChat('/', "tp gh"); });
     GW::Chat::CreateCommand(L"enter", ChatCommands::CmdEnterMission);
     GW::Chat::CreateCommand(L"age2", ChatCommands::CmdAge2);
     GW::Chat::CreateCommand(L"dialog", ChatCommands::CmdDialog);
@@ -525,12 +534,10 @@ void ChatCommands::Initialize() {
     GW::Chat::CreateCommand(L"settitle", ChatCommands::CmdReapplyTitle);
     GW::Chat::CreateCommand(L"title", ChatCommands::CmdReapplyTitle);
     GW::Chat::CreateCommand(L"pingitem", ChatCommands::CmdPingEquipment);
-    GW::Chat::CreateCommand(L"tick", [](const wchar_t*, int, LPWSTR*) -> void {
-        GW::PartyMgr::Tick(!GW::PartyMgr::GetIsPlayerTicked());
-        });
-    GW::Chat::CreateCommand(L"armor", [](const wchar_t*, int, LPWSTR*) -> void {
-        GW::Chat::SendChat('/', "pingitem armor");
-    });
+    GW::Chat::CreateCommand(
+        L"tick", [](const wchar_t*, int, LPWSTR*) -> void { GW::PartyMgr::Tick(!GW::PartyMgr::GetIsPlayerTicked()); });
+    GW::Chat::CreateCommand(
+        L"armor", [](const wchar_t*, int, LPWSTR*) -> void { GW::Chat::SendChat('/', "pingitem armor"); });
     GW::Chat::CreateCommand(L"hero", ChatCommands::CmdHeroBehaviour);
     GW::Chat::CreateCommand(L"morale", ChatCommands::CmdMorale);
     GW::Chat::CreateCommand(L"volume", ChatCommands::CmdVolume);
@@ -553,8 +560,6 @@ void ChatCommands::Initialize() {
     }
     GW::Chat::CreateCommand(L"mute", CmdMute); // Doesn't unmute!
 #endif
-    
-        
 }
 
 bool ChatCommands::WndProc(UINT Message, WPARAM wParam, LPARAM lParam) {
@@ -581,8 +586,7 @@ bool ChatCommands::WndProc(UINT Message, WPARAM wParam, LPARAM lParam) {
                 case VK_UP:
                 case VK_DOWN:
                 case VK_LEFT:
-                case VK_RIGHT:
-                    return true;
+                case VK_RIGHT: return true;
             }
     }
     return false;
@@ -593,17 +597,15 @@ void ChatCommands::Update(float delta) {
         auto* titles = GetTitles();
         for (size_t i = 0; titles && i < titles->size(); i++) {
             switch ((GW::Constants::TitleID)i) {
-            case GW::Constants::TitleID::Deprecated_SkillHunter:
-            case GW::Constants::TitleID::Deprecated_TreasureHunter:
-            case GW::Constants::TitleID::Deprecated_Wisdom:
-                continue;
+                case GW::Constants::TitleID::Deprecated_SkillHunter:
+                case GW::Constants::TitleID::Deprecated_TreasureHunter:
+                case GW::Constants::TitleID::Deprecated_Wisdom: continue;
             }
             DecodedTitleName* dtn = new DecodedTitleName((GW::Constants::TitleID)i);
             title_names.push_back(dtn);
             dtn->name.string(); // Trigger decode for sorting.
         }
-    }
-    else if (!title_names_sorted) {
+    } else if (!title_names_sorted) {
         bool can_sort = true;
         for (auto* title_name : title_names) {
             if (title_name->name.IsDecoding()) {
@@ -613,20 +615,16 @@ void ChatCommands::Update(float delta) {
         }
         if (can_sort) {
             std::ranges::sort(title_names, [](DecodedTitleName* first, DecodedTitleName* second) {
-                    return first->name.string() < second->name.string();
-                });
+                return first->name.string() < second->name.string();
+            });
             title_names_sorted = true;
         }
-
     }
     static bool keep_forward; // No init. should it be false as default
 
     if (delta == 0.f) return;
 
-    if (GW::CameraMgr::GetCameraUnlock()
-        && !GW::Chat::GetIsTyping()
-        && !ImGui::GetIO().WantTextInput) {
-
+    if (GW::CameraMgr::GetCameraUnlock() && !GW::Chat::GetIsTyping() && !ImGui::GetIO().WantTextInput) {
         float forward = 0;
         float vertical = 0;
         float rotate = 0;
@@ -641,10 +639,8 @@ void ChatCommands::Update(float delta) {
         if (ImGui::IsKeyDown(VK_D) || ImGui::IsKeyDown(VK_RIGHT)) rotate -= 1.0f;
         if (ImGui::IsKeyDown(VK_R)) keep_forward = true;
 
-        if (ImGui::IsKeyDown(VK_W) || ImGui::IsKeyDown(VK_UP) ||
-            ImGui::IsKeyDown(VK_S) || ImGui::IsKeyDown(VK_DOWN) ||
-            ImGui::IsKeyDown(VK_ESCAPE))
-        {
+        if (ImGui::IsKeyDown(VK_W) || ImGui::IsKeyDown(VK_UP) || ImGui::IsKeyDown(VK_S) || ImGui::IsKeyDown(VK_DOWN) ||
+            ImGui::IsKeyDown(VK_ESCAPE)) {
             keep_forward = false;
         }
 
@@ -659,16 +655,14 @@ void ChatCommands::Update(float delta) {
         GW::CameraMgr::SideMovement(side * delta * cam_speed);
         GW::CameraMgr::UpdateCameraPos();
     }
-    skill_to_use.Update();
+    useskill.Update();
     npc_to_find.Update();
     quest_ping.Update();
 
     if (hom_achievements_result == 0) {
         hom_achievements_result = 1;
         hom_achievements.OpenInBrowser();
-        
     }
-
 }
 void ChatCommands::QuestPing::Init() {
     auto* quest = GW::PlayerMgr::GetActiveQuest();
@@ -702,46 +696,37 @@ void ChatCommands::QuestPing::Update() {
 void ChatCommands::SearchAgent::Init(const wchar_t* _search, TargetType type) {
     started = 0;
     npc_names.clear();
-    if (!_search || !_search[0])
-        return;
+    if (!_search || !_search[0]) return;
     search = GuiUtils::ToLower(_search);
     npc_names.clear();
     started = TIMER_INIT();
     GW::AgentArray* agents = GW::Agents::GetAgentArray();
-    if (!agents)
-        return;
+    if (!agents) return;
     for (const GW::Agent* agent : *agents) {
         if (!agent) continue;
         switch (type) {
-        case Item:
-            if (!agent->GetIsItemType())
-                continue;
-            break;
-        case Gadget:
-            if (!agent->GetIsGadgetType())
-                continue;
-            break;
-        case Player:
-            if (!agent->GetIsLivingType() || !agent->GetAsAgentLiving()->IsPlayer())
-                continue;
-            break;
-        case Npc: {
-            const GW::AgentLiving* agent_living = agent->GetAsAgentLiving();
-            if (!agent_living || !agent_living->IsNPC() || !agent_living->GetIsAlive())
-                continue;
-        } break;
-        case Living: {
+            case Item:
+                if (!agent->GetIsItemType()) continue;
+                break;
+            case Gadget:
+                if (!agent->GetIsGadgetType()) continue;
+                break;
+            case Player:
+                if (!agent->GetIsLivingType() || !agent->GetAsAgentLiving()->IsPlayer()) continue;
+                break;
+            case Npc: {
                 const GW::AgentLiving* agent_living = agent->GetAsAgentLiving();
-                if (!agent_living || !agent_living->GetIsAlive())
-                    continue;
-        } break;
-        default:
-            continue;
+                if (!agent_living || !agent_living->IsNPC() || !agent_living->GetIsAlive()) continue;
+            } break;
+            case Living: {
+                const GW::AgentLiving* agent_living = agent->GetAsAgentLiving();
+                if (!agent_living || !agent_living->GetIsAlive()) continue;
+            } break;
+            default: continue;
         }
         const wchar_t* enc_name = GW::Agents::GetAgentEncName(agent);
-        if (!enc_name || !enc_name[0])
-            continue;
-        npc_names.push_back({ agent->agent_id, new GuiUtils::EncString(enc_name) });
+        if (!enc_name || !enc_name[0]) continue;
+        npc_names.push_back({agent->agent_id, new GuiUtils::EncString(enc_name)});
     }
 }
 void ChatCommands::SearchAgent::Update() {
@@ -752,61 +737,30 @@ void ChatCommands::SearchAgent::Update() {
         return;
     }
     for (auto& enc_name : npc_names) {
-        if (enc_name.second->wstring().empty())
-            return; // Not all decoded yet
+        if (enc_name.second->wstring().empty()) return; // Not all decoded yet
     }
     // Do search
     size_t found = std::wstring::npos;
     float distance = GW::Constants::SqrRange::Compass;
     size_t closest = 0;
     GW::Agent* me = GW::Agents::GetPlayer();
-    if (!me)
-        return;
+    if (!me) return;
     for (auto& enc_name : npc_names) {
         found = GuiUtils::ToLower(enc_name.second->wstring()).find(search.c_str());
-        if (found == std::wstring::npos)
-            continue;
+        if (found == std::wstring::npos) continue;
         GW::Agent* agent = GW::Agents::GetAgentByID(enc_name.first);
-        if (!agent)
-            continue;
+        if (!agent) continue;
         float dist = GW::GetDistance(me->pos, agent->pos);
         if (dist < distance) {
             closest = agent->agent_id;
             distance = dist;
         }
     }
-    if(closest) GW::Agents::ChangeTarget(closest);
+    if (closest) GW::Agents::ChangeTarget(closest);
     Init(nullptr);
 }
 
-void ChatCommands::SkillToUse::Update() {
-    if (!slot)
-        return;
-    if (GW::Map::GetInstanceType() != GW::Constants::InstanceType::Explorable || GW::Map::GetIsObserving()) {
-        slot = 0;
-        return;
-    }
-    if ((clock() - skill_timer) / 1000.0f < skill_usage_delay)
-        return;
-    const GW::Skillbar* const skillbar = GW::SkillbarMgr::GetPlayerSkillbar();
-    if (!skillbar || !skillbar->IsValid()) {
-        slot = 0;
-        return;
-    }
-    uint32_t lslot = slot - 1;
-    const GW::SkillbarSkill& skill = skillbar->skills[lslot];
-    if (skill.skill_id == GW::Constants::SkillID::No_Skill) {
-        slot = 0;
-        return;
-    }
-    const GW::Skill& skilldata = *GW::SkillbarMgr::GetSkillConstantData(skill.skill_id);
-    if ((skilldata.adrenaline == 0 && skill.GetRecharge() == 0) || (skilldata.adrenaline > 0 && skill.adrenaline_a == skilldata.adrenaline)) {
-        GW::SkillbarMgr::UseSkill(lslot, GW::Agents::GetTargetId());
-        skill_usage_delay = std::max(skilldata.activation + skilldata.aftercast, 0.1f); // a small flat delay of .3s for ping and to avoid spamming in case of bad target
-        skill_timer = clock();
-    }
-}
-bool ChatCommands::ReadTemplateFile(std::wstring path, char *buff, size_t buffSize) {
+bool ChatCommands::ReadTemplateFile(std::wstring path, char* buff, size_t buffSize) {
     HANDLE fileHandle = CreateFileW(path.c_str(), GENERIC_READ, 0, NULL, OPEN_EXISTING, 0, NULL);
     if (fileHandle == INVALID_HANDLE_VALUE) {
         // We don't print that error, because we can /load [template]
@@ -839,55 +793,47 @@ void ChatCommands::CmdEnterMission(const wchar_t*, int argc, LPWSTR* argv) {
     const char* const error_no_scrolls = "Unable to enter elite area; no scroll found";
     const char* const error_not_leading = "Unable to enter mission; you're not party leader";
 
-    if (GW::Map::GetInstanceType() != GW::Constants::InstanceType::Outpost)
-        return Log::Error(error_use_from_outpost);
+    if (GW::Map::GetInstanceType() != GW::Constants::InstanceType::Outpost) return Log::Error(error_use_from_outpost);
 
     switch (GW::Map::GetMapID()) {
-    case GW::Constants::MapID::Temple_of_the_Ages:
-    case GW::Constants::MapID::Embark_Beach: {
-        if (argc < 2)
-            return Log::Error(error_fow_uw_syntax);
-        uint32_t item_id;
-        const std::wstring arg1 = GuiUtils::ToLower(argv[1]);
-        if (arg1 == L"fow")
-            item_id = 22280;
-        else if (arg1 == L"uw")
-            item_id = 3746;
-        else
-            return Log::Error(error_fow_uw_syntax);
-        if (!GW::Items::UseItemByModelId(item_id, 1, 4) && !GW::Items::UseItemByModelId(item_id, 8, 16))
-            return Log::Error(error_no_scrolls);
-    }
-        break;
-    default:
-        const GW::AreaInfo* const map_info = GW::Map::GetCurrentMapInfo();
-        if (!map_info || !map_info->GetHasEnterButton())
-            return Log::Error(error_use_from_outpost);
-        if (!GW::PartyMgr::GetIsLeader())
-            return Log::Error(error_not_leading);
-        const GW::PartyContext* const p = GW::GameContext::instance()->party;
-        if (p && (p->flag & 0x8) != 0) {
-            GW::Map::CancelEnterChallenge();
-        }
-        else {
-            GW::Map::EnterChallenge();
-        }
+        case GW::Constants::MapID::Temple_of_the_Ages:
+        case GW::Constants::MapID::Embark_Beach: {
+            if (argc < 2) return Log::Error(error_fow_uw_syntax);
+            uint32_t item_id;
+            const std::wstring arg1 = GuiUtils::ToLower(argv[1]);
+            if (arg1 == L"fow")
+                item_id = 22280;
+            else if (arg1 == L"uw")
+                item_id = 3746;
+            else
+                return Log::Error(error_fow_uw_syntax);
+            if (!GW::Items::UseItemByModelId(item_id, 1, 4) && !GW::Items::UseItemByModelId(item_id, 8, 16))
+                return Log::Error(error_no_scrolls);
+        } break;
+        default:
+            const GW::AreaInfo* const map_info = GW::Map::GetCurrentMapInfo();
+            if (!map_info || !map_info->GetHasEnterButton()) return Log::Error(error_use_from_outpost);
+            if (!GW::PartyMgr::GetIsLeader()) return Log::Error(error_not_leading);
+            const GW::PartyContext* const p = GW::GameContext::instance()->party;
+            if (p && (p->flag & 0x8) != 0) {
+                GW::Map::CancelEnterChallenge();
+            } else {
+                GW::Map::EnterChallenge();
+            }
     }
 }
-void ChatCommands::CmdMorale(const wchar_t*, int , LPWSTR* ) {
+void ChatCommands::CmdMorale(const wchar_t*, int, LPWSTR*) {
     if (GW::GameContext::instance()->world->morale == 100)
         GW::Chat::SendChat('#', L"I have no Morale Boost or Death Penalty!");
     else
         GW::Agents::CallTarget(GW::Agents::GetPlayer(), GW::CallTargetType::Morale);
 }
-void ChatCommands::CmdAge2(const wchar_t* , int, LPWSTR* ) {
-    TimerWidget::Instance().PrintTimer();
-}
+void ChatCommands::CmdAge2(const wchar_t*, int, LPWSTR*) { TimerWidget::Instance().PrintTimer(); }
 
 void ChatCommands::CmdDialog(const wchar_t*, int argc, LPWSTR* argv) {
-    if (!IsMapReady())
-        return;
-    const char* syntax = "Syntax: '/dialog [dialog_id]' (e.g. '/dialog 0x184')\nSyntax: '/dialog take' (to take first available quest)";
+    if (!IsMapReady()) return;
+    const char* syntax =
+        "Syntax: '/dialog [dialog_id]' (e.g. '/dialog 0x184')\nSyntax: '/dialog take' (to take first available quest)";
     if (argc <= 1) {
         Log::Error(syntax);
         return;
@@ -895,35 +841,31 @@ void ChatCommands::CmdDialog(const wchar_t*, int argc, LPWSTR* argv) {
     uint32_t id = 0;
     if (wcscmp(argv[1], L"take") == 0) {
         id = 0;
-    }
-    else if (!(GuiUtils::ParseUInt(argv[1], &id) && id)) {
+    } else if (!(GuiUtils::ParseUInt(argv[1], &id) && id)) {
         Log::Error(syntax);
         return;
     }
     if (!DialogModule::GetDialogAgent()) {
         const auto* target = GW::Agents::GetTargetAsAgentLiving();
         const auto* me = GW::Agents::GetPlayer();
-        if (target && target->allegiance == GW::Constants::Allegiance::Npc_Minipet
-            && GW::GetDistance(me->pos, target->pos) < GW::Constants::Range::Area) {
+        if (target && target->allegiance == GW::Constants::Allegiance::Npc_Minipet &&
+            GW::GetDistance(me->pos, target->pos) < GW::Constants::Range::Area) {
             GW::Agents::GoNPC(target);
         }
     }
     DialogModule::SendDialog(id);
 }
 
-void ChatCommands::CmdChest(const wchar_t *, int, LPWSTR * ) {
-    if (!IsMapReady())
-        return;
+void ChatCommands::CmdChest(const wchar_t*, int, LPWSTR*) {
+    if (!IsMapReady()) return;
     if (GW::Map::GetInstanceType() == GW::Constants::InstanceType::Outpost) {
         GW::Items::OpenXunlaiWindow();
     }
-
 }
 
-void ChatCommands::CmdTB(const wchar_t *message, int argc, LPWSTR *argv) {
-    if (!ImGui::GetCurrentContext())
-        return; // Don't process window manips until ImGui is ready
-    if (argc < 2) { // e.g. /tbs
+void ChatCommands::CmdTB(const wchar_t* message, int argc, LPWSTR* argv) {
+    if (!ImGui::GetCurrentContext()) return; // Don't process window manips until ImGui is ready
+    if (argc < 2) {                          // e.g. /tbs
         MainWindow::Instance().visible ^= 1;
         return;
     }
@@ -932,33 +874,25 @@ void ChatCommands::CmdTB(const wchar_t *message, int argc, LPWSTR *argv) {
         const std::wstring arg = GuiUtils::ToLower(argv[1]);
         if (arg == L"hide") { // e.g. /tb hide
             MainWindow::Instance().visible = false;
-        }
-        else if (arg == L"show") { // e.g. /tb show
+        } else if (arg == L"show") { // e.g. /tb show
             MainWindow::Instance().visible = true;
-        }
-        else if (arg == L"save") { // e.g. /tb save
+        } else if (arg == L"save") { // e.g. /tb save
             GWToolbox::Instance().SaveSettings();
-        }
-        else if (arg == L"load") { // e.g. /tb load
+        } else if (arg == L"load") { // e.g. /tb load
             GWToolbox::Instance().OpenSettingsFile();
             GWToolbox::Instance().LoadModuleSettings();
-        }
-        else if (arg == L"reset") { // e.g. /tb reset
+        } else if (arg == L"reset") { // e.g. /tb reset
             ImGui::SetWindowPos(MainWindow::Instance().Name(), ImVec2(50.0f, 50.0f));
             ImGui::SetWindowPos(SettingsWindow::Instance().Name(), ImVec2(50.0f, 50.0f));
             MainWindow::Instance().visible = false;
             SettingsWindow::Instance().visible = true;
-        }
-        else if (arg == L"mini" || arg == L"minimize" || arg == L"collapse") { // e.g. /tb mini
+        } else if (arg == L"mini" || arg == L"minimize" || arg == L"collapse") { // e.g. /tb mini
             ImGui::SetWindowCollapsed(MainWindow::Instance().Name(), true);
-        }
-        else if (arg == L"maxi" || arg == L"maximize") { // e.g. /tb maxi
+        } else if (arg == L"maxi" || arg == L"maximize") { // e.g. /tb maxi
             ImGui::SetWindowCollapsed(MainWindow::Instance().Name(), false);
-        }
-        else if (arg == L"close" || arg == L"quit" || arg == L"exit") { // e.g. /tb close
+        } else if (arg == L"close" || arg == L"quit" || arg == L"exit") { // e.g. /tb close
             GWToolbox::Instance().StartSelfDestruct();
-        }
-        else { // e.g. /tb travel
+        } else { // e.g. /tb travel
             std::vector<ToolboxUIElement*> windows = MatchingWindows(message, argc, argv);
             for (ToolboxUIElement* window : windows) {
                 window->visible ^= 1;
@@ -971,20 +905,16 @@ void ChatCommands::CmdTB(const wchar_t *message, int argc, LPWSTR *argv) {
     if (arg == L"hide") { // e.g. /tb travel hide
         for (auto const& window : windows)
             window->visible = false;
-    }
-    else if (arg == L"show") { // e.g. /tb travel show
+    } else if (arg == L"show") { // e.g. /tb travel show
         for (auto const& window : windows)
             window->visible = true;
-    }
-    else if (arg == L"mini" || arg == L"minimize" || arg == L"collapse") { // e.g. /tb travel mini
+    } else if (arg == L"mini" || arg == L"minimize" || arg == L"collapse") { // e.g. /tb travel mini
         for (auto const& window : windows)
             ImGui::SetWindowCollapsed(window->Name(), true);
-    }
-    else if (arg == L"maxi" || arg == L"maximize") { // e.g. /tb travel maxi
+    } else if (arg == L"maxi" || arg == L"maximize") { // e.g. /tb travel maxi
         for (auto const& window : windows)
             ImGui::SetWindowCollapsed(window->Name(), false);
-    }
-    else { // Invalid argument
+    } else { // Invalid argument
         constexpr size_t buffer_size = 255;
         char buffer[buffer_size];
         snprintf(buffer, buffer_size, "Syntax: /%S %S [hide|show|mini|maxi]", argv[0], argv[1]);
@@ -993,26 +923,20 @@ void ChatCommands::CmdTB(const wchar_t *message, int argc, LPWSTR *argv) {
 }
 
 GW::UI::WindowID ChatCommands::MatchingGWWindow(const wchar_t*, int argc, LPWSTR* argv) {
-    const std::map<GW::UI::WindowID, const wchar_t*> gw_windows = {
-        {GW::UI::WindowID_Compass,L"compass"},
-        {GW::UI::WindowID_HealthBar,L"healthbar"},
-        {GW::UI::WindowID_EnergyBar,L"energybar"},
-        {GW::UI::WindowID_ExperienceBar,L"experiencebar"},
-        {GW::UI::WindowID_Chat,L"chat"}
-    };
-    if (argc < 2)
-        return GW::UI::WindowID_Count;
+    const std::map<GW::UI::WindowID, const wchar_t*> gw_windows = {{GW::UI::WindowID_Compass, L"compass"},
+        {GW::UI::WindowID_HealthBar, L"healthbar"}, {GW::UI::WindowID_EnergyBar, L"energybar"},
+        {GW::UI::WindowID_ExperienceBar, L"experiencebar"}, {GW::UI::WindowID_Chat, L"chat"}};
+    if (argc < 2) return GW::UI::WindowID_Count;
     const std::wstring arg = GuiUtils::ToLower(argv[1]);
     if (arg.size() && arg != L"all") {
         for (const auto& it : gw_windows) {
-            if (wcscmp(it.second, arg.c_str()) == 0)
-                return it.first;
+            if (wcscmp(it.second, arg.c_str()) == 0) return it.first;
         }
     }
     return GW::UI::WindowID_Count;
 };
 
-std::vector<ToolboxUIElement*> ChatCommands::MatchingWindows(const wchar_t *, int argc, LPWSTR *argv) {
+std::vector<ToolboxUIElement*> ChatCommands::MatchingWindows(const wchar_t*, int argc, LPWSTR* argv) {
     std::vector<ToolboxUIElement*> ret;
     if (argc <= 1) {
         ret.push_back(&MainWindow::Instance());
@@ -1022,10 +946,10 @@ std::vector<ToolboxUIElement*> ChatCommands::MatchingWindows(const wchar_t *, in
             for (ToolboxUIElement* window : GWToolbox::Instance().GetUIElements()) {
                 ret.push_back(window);
             }
-        } else if(arg.size()) {
+        } else if (arg.size()) {
             const std::string name = GuiUtils::WStringToString(arg);
             for (ToolboxUIElement* window : GWToolbox::Instance().GetUIElements()) {
-                if (GuiUtils::ToLower(window->Name()).find(name) == 0){
+                if (GuiUtils::ToLower(window->Name()).find(name) == 0) {
                     ret.push_back(window);
                 }
             }
@@ -1034,7 +958,7 @@ std::vector<ToolboxUIElement*> ChatCommands::MatchingWindows(const wchar_t *, in
     return ret;
 }
 
-void ChatCommands::CmdShow(const wchar_t *message, int , LPWSTR *) {
+void ChatCommands::CmdShow(const wchar_t* message, int, LPWSTR*) {
     std::wstring cmd = L"toggle ";
     cmd.append(GetRemainingArgsWstr(message, 1));
     cmd.append(L" on");
@@ -1053,16 +977,11 @@ void ChatCommands::CmdToggle(const wchar_t* message, int argc, LPWSTR* argv) {
     }
     std::wstring last_arg = GuiUtils::ToLower(argv[argc - 1]);
     bool ignore_last_arg = false;
-    enum ActionType : uint8_t {
-        Toggle,
-        On,
-        Off
-    } action = Toggle;
+    enum ActionType : uint8_t { Toggle, On, Off } action = Toggle;
     if (last_arg == L"on" || last_arg == L"1" || last_arg == L"show") {
         action = On;
         ignore_last_arg = true;
-    }
-    else if (last_arg == L"off" || last_arg == L"0" || last_arg == L"hide") {
+    } else if (last_arg == L"off" || last_arg == L"0" || last_arg == L"hide") {
         action = Off;
         ignore_last_arg = true;
     }
@@ -1072,29 +991,23 @@ void ChatCommands::CmdToggle(const wchar_t* message, int argc, LPWSTR* argv) {
 
     if (second_arg == L"cape") {
         equipment_slot = GW::EquipmentType::Cape;
-    }
-    else if (second_arg == L"head" || second_arg == L"helm") {
+    } else if (second_arg == L"head" || second_arg == L"helm") {
         equipment_slot = GW::EquipmentType::Helm;
-    }
-    else if (second_arg == L"costume_head") {
+    } else if (second_arg == L"costume_head") {
         equipment_slot = GW::EquipmentType::CostumeHeadpiece;
-    }
-    else if (second_arg == L"costume") {
+    } else if (second_arg == L"costume") {
         equipment_slot = GW::EquipmentType::CostumeBody;
     }
     if (equipment_slot != GW::EquipmentType::Unknown) {
         GW::EquipmentStatus state = GW::Items::GetEquipmentVisibility(equipment_slot);
         // Toggling visibility of equipment
         switch (action) {
-        case On:
-            state = GW::EquipmentStatus::AlwaysShow;
-            break;
-        case Off:
-            state = GW::EquipmentStatus::AlwaysHide;
-            break;
-        default:
-            state = (state == GW::EquipmentStatus::AlwaysShow ? GW::EquipmentStatus::AlwaysHide : GW::EquipmentStatus::AlwaysShow);
-            break;
+            case On: state = GW::EquipmentStatus::AlwaysShow; break;
+            case Off: state = GW::EquipmentStatus::AlwaysHide; break;
+            default:
+                state = (state == GW::EquipmentStatus::AlwaysShow ? GW::EquipmentStatus::AlwaysHide
+                                                                  : GW::EquipmentStatus::AlwaysShow);
+                break;
         }
         ASSERT(GW::Items::SetEquipmentVisibility(equipment_slot, state));
         return;
@@ -1106,34 +1019,23 @@ void ChatCommands::CmdToggle(const wchar_t* message, int argc, LPWSTR* argv) {
     }*/
     for (ToolboxUIElement* window : windows) {
         switch (action) {
-        case On:
-            window->visible = true;
-            break;
-        case Off:
-            window->visible = false;
-            break;
-        default:
-            window->visible = !window->visible;
-            break;
+            case On: window->visible = true; break;
+            case Off: window->visible = false; break;
+            default: window->visible = !window->visible; break;
         }
     }
     GW::UI::WindowID gw_window = MatchingGWWindow(message, ignore_last_arg ? argc - 1 : argc, argv);
     if (gw_window < GW::UI::WindowID_Count) {
         bool set = true;
         switch (action) {
-        case Off:
-            set = false;
-            break;
-        case Toggle:
-            set = !GW::UI::GetWindowPosition(gw_window)->visible();
-            break;
+            case Off: set = false; break;
+            case Toggle: set = !GW::UI::GetWindowPosition(gw_window)->visible(); break;
         }
         GW::UI::SetWindowVisible(gw_window, set);
     }
 }
 
-
-void ChatCommands::CmdZoom(const wchar_t *message, int argc, LPWSTR *argv) {
+void ChatCommands::CmdZoom(const wchar_t* message, int argc, LPWSTR* argv) {
     UNREFERENCED_PARAMETER(message);
     if (argc <= 1) {
         GW::CameraMgr::SetMaxDist();
@@ -1151,7 +1053,7 @@ void ChatCommands::CmdZoom(const wchar_t *message, int argc, LPWSTR *argv) {
     }
 }
 
-void ChatCommands::CmdCamera(const wchar_t *message, int argc, LPWSTR *argv) {
+void ChatCommands::CmdCamera(const wchar_t* message, int argc, LPWSTR* argv) {
     UNREFERENCED_PARAMETER(message);
     if (argc == 1) {
         GW::CameraMgr::UnlockCam(false);
@@ -1181,9 +1083,7 @@ void ChatCommands::CmdCamera(const wchar_t *message, int argc, LPWSTR *argv) {
                 } else {
                     float speed = 0.0f;
                     if (!GuiUtils::ParseFloat(arg2.c_str(), &speed)) {
-                        Log::Error(
-                            "Invalid argument '%ls', please use a float value",
-                            argv[2]);
+                        Log::Error("Invalid argument '%ls', please use a float value", argv[2]);
                         return;
                     }
                     Instance().cam_speed = speed;
@@ -1196,7 +1096,6 @@ void ChatCommands::CmdCamera(const wchar_t *message, int argc, LPWSTR *argv) {
     }
 }
 
-
 void ChatCommands::CmdObserverReset(const wchar_t* message, int argc, LPWSTR* argv) {
     UNREFERENCED_PARAMETER(message);
     UNREFERENCED_PARAMETER(argc);
@@ -1204,8 +1103,7 @@ void ChatCommands::CmdObserverReset(const wchar_t* message, int argc, LPWSTR* ar
     ObserverModule::Instance().Reset();
 }
 
-
-void ChatCommands::CmdDamage(const wchar_t *message, int argc, LPWSTR *argv) {
+void ChatCommands::CmdDamage(const wchar_t* message, int argc, LPWSTR* argv) {
     UNREFERENCED_PARAMETER(message);
     if (argc <= 1) {
         PartyDamage::Instance().WritePartyDamage();
@@ -1226,12 +1124,12 @@ void ChatCommands::CmdDamage(const wchar_t *message, int argc, LPWSTR *argv) {
     }
 }
 
-void ChatCommands::CmdAfk(const wchar_t *message, int argc, LPWSTR *argv) {
+void ChatCommands::CmdAfk(const wchar_t* message, int argc, LPWSTR* argv) {
     UNREFERENCED_PARAMETER(argv);
     GW::FriendListMgr::SetFriendListStatus(GW::FriendStatus::Away);
     GameSettings& settings = GameSettings::Instance();
     if (argc > 1) {
-        const wchar_t *afk_msg = next_word(message);
+        const wchar_t* afk_msg = next_word(message);
         settings.SetAfkMessage(afk_msg);
     } else {
         settings.afk_message.clear();
@@ -1246,9 +1144,8 @@ const wchar_t* ChatCommands::GetRemainingArgsWstr(const wchar_t* message, int ar
     }
     return out;
 };
-void ChatCommands::CmdTarget(const wchar_t *message, int argc, LPWSTR *argv) {
-    if (argc < 2)
-        return Log::ErrorW(L"Missing argument for /%s", argv[0]);
+void ChatCommands::CmdTarget(const wchar_t* message, int argc, LPWSTR* argv) {
+    if (argc < 2) return Log::ErrorW(L"Missing argument for /%s", argv[0]);
 
     const wchar_t* zero_w = L"0";
 
@@ -1258,7 +1155,7 @@ void ChatCommands::CmdTarget(const wchar_t *message, int argc, LPWSTR *argv) {
     if (arg1 == L"vipers" || arg1 == L"hos") // /target vipers or /target hos
         return TargetVipers();
     if (IsNearestStr(arg1.c_str())) {
-        if(argc < 3)  // /target nearest
+        if (argc < 3) // /target nearest
             return TargetNearest(zero_w, Living);
         const std::wstring arg2 = GuiUtils::ToLower(argv[2]);
         if (arg2 == L"item") { // /target nearest item [model_id|name]
@@ -1370,26 +1267,65 @@ void ChatCommands::CmdTarget(const wchar_t *message, int argc, LPWSTR *argv) {
     return TargetNearest(GetRemainingArgsWstr(message, 1), Npc);
 }
 
-void ChatCommands::CmdUseSkill(const wchar_t *, int argc, LPWSTR *argv) {
-    if (!IsMapReady())
-        return;
-    SkillToUse& skill_to_use = Instance().skill_to_use;
-    skill_to_use.slot = 0;
-    if (argc < 2)
-        return;
-    const std::wstring arg1 = GuiUtils::ToLower(argv[1]);
-    if (arg1 == L"stop" || arg1 == L"off" || arg1 == L"0")
-        return; // do nothing, already cleared skills_to_use
-    uint32_t num = 0;
-    if (!GuiUtils::ParseUInt(argv[1], &num) || num < 1 || num > 8) {
-        Log::Error("Invalid argument '%ls', please use an integer value of 1 to 8", argv[1]);
+void ChatCommands::UseSkill::Update() {
+    if (slot == 0) return;
+    if ((clock() - skill_timer) / 1000.0f < skill_usage_delay) return;
+    const auto skillbar = GW::SkillbarMgr::GetPlayerSkillbar();
+    if (!skillbar || !skillbar->IsValid()) {
+        slot = 0;
         return;
     }
-    skill_to_use.slot = num;
-    skill_to_use.skill_usage_delay = .0f;
+    const auto me = GW::Agents::GetPlayer();
+    if (!me) return;
+    const auto me_living = me->GetAsAgentLiving();
+    if (!me_living) return;
+
+    const auto current_energy = static_cast<uint32_t>(me_living->energy * me_living->max_energy);
+    CastSelectedSkill(current_energy, skillbar);
 }
 
-void ChatCommands::CmdSCWiki(const wchar_t *message, int argc, LPWSTR *argv) {
+void ChatCommands::BaseUseSkill::CastSelectedSkill(const uint32_t current_energy,
+                                                   const GW::Skillbar *skillbar,
+                                                   const uint32_t target_id)
+{
+    const auto lslot = slot - 1;
+    const auto &skill = skillbar->skills[lslot];
+    const auto skilldata = GW::SkillbarMgr::GetSkillConstantData(skill.skill_id);
+    if (!skilldata)
+        return;
+
+    const auto enough_energy = current_energy > skilldata->energy_cost;
+    const auto enough_adrenaline =
+        (skilldata->adrenaline == 0) || (skilldata->adrenaline > 0 && skill.adrenaline_a >= skilldata->adrenaline);
+    if (skill.GetRecharge() == 0 && enough_energy && enough_adrenaline)
+    {
+        if (target_id)
+            GW::SkillbarMgr::UseSkill(lslot, target_id);
+        else
+            GW::SkillbarMgr::UseSkill(lslot, GW::Agents::GetTargetId());
+        skill_usage_delay = skilldata->activation + skilldata->aftercast;
+        skill_timer = clock();
+    }
+}
+
+void ChatCommands::CmdUseSkill(const wchar_t*, int argc, LPWSTR* argv) {
+    if (!IsMapReady() || !IsExplorable()) return;
+
+    auto& useskill = Instance().useskill;
+
+    useskill.skill_usage_delay = 0.0F;
+    useskill.slot = 0;
+
+    if (argc < 2) return;
+
+    const auto arg1 = std::wstring{argv[1]};
+    const auto arg1_int = _wtoi(arg1.data());
+    if (arg1_int == 0 || arg1_int < 1 || arg1_int > 8) return;
+
+    useskill.slot = arg1_int;
+}
+
+void ChatCommands::CmdSCWiki(const wchar_t* message, int argc, LPWSTR* argv) {
     UNREFERENCED_PARAMETER(message);
     CoInitializeEx(NULL, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
     if (argc == 1) {
@@ -1407,8 +1343,7 @@ void ChatCommands::CmdSCWiki(const wchar_t *message, int argc, LPWSTR *argv) {
     }
 }
 
-void ChatCommands::CmdLoad(const wchar_t* message, int argc, LPWSTR* argv)
-{
+void ChatCommands::CmdLoad(const wchar_t* message, int argc, LPWSTR* argv) {
     UNREFERENCED_PARAMETER(message);
     // We will & should move that to GWCA.
     static int(__cdecl * GetPersonalDir)(size_t size, wchar_t * dir) = 0;
@@ -1494,8 +1429,7 @@ void ChatCommands::CmdPing(const wchar_t* message, int argc, LPWSTR* argv) {
 }
 void ChatCommands::CmdPingEquipment(const wchar_t* message, int argc, LPWSTR* argv) {
     UNREFERENCED_PARAMETER(message);
-    if (!IsMapReady())
-        return;
+    if (!IsMapReady()) return;
     if (argc < 2) {
         Log::Error("Missing argument for /pingitem");
         return;
@@ -1516,21 +1450,18 @@ void ChatCommands::CmdPingEquipment(const wchar_t* message, int argc, LPWSTR* ar
     else if (arg1 == L"gloves" || arg1 == L"hands")
         GameSettings::PingItem(GW::Items::GetItemBySlot(GW::Constants::Bag::Equipped_Items, 7), 2);
     else if (arg1 == L"weapons") {
-        GameSettings::PingItem(GW::Items::GetItemBySlot(GW::Constants::Bag::Equipped_Items, 1),3);
+        GameSettings::PingItem(GW::Items::GetItemBySlot(GW::Constants::Bag::Equipped_Items, 1), 3);
         GameSettings::PingItem(GW::Items::GetItemBySlot(GW::Constants::Bag::Equipped_Items, 2), 3);
-    }
-    else if (arg1 == L"armor") {
+    } else if (arg1 == L"armor") {
         GameSettings::PingItem(GW::Items::GetItemBySlot(GW::Constants::Bag::Equipped_Items, 5), 2);
         GameSettings::PingItem(GW::Items::GetItemBySlot(GW::Constants::Bag::Equipped_Items, 3), 2);
         GameSettings::PingItem(GW::Items::GetItemBySlot(GW::Constants::Bag::Equipped_Items, 7), 2);
         GameSettings::PingItem(GW::Items::GetItemBySlot(GW::Constants::Bag::Equipped_Items, 4), 2);
         GameSettings::PingItem(GW::Items::GetItemBySlot(GW::Constants::Bag::Equipped_Items, 6), 2);
-    }
-    else if (arg1 == L"costume") {
+    } else if (arg1 == L"costume") {
         GameSettings::PingItem(GW::Items::GetItemBySlot(GW::Constants::Bag::Equipped_Items, 8), 1);
         GameSettings::PingItem(GW::Items::GetItemBySlot(GW::Constants::Bag::Equipped_Items, 9), 1);
-    }
-    else {
+    } else {
         Log::Error("Unrecognised /pingitem %ls", argv[1]);
     }
 }
@@ -1544,22 +1475,17 @@ void ChatCommands::CmdTransmoParty(const wchar_t*, int argc, LPWSTR* argv) {
         int iscale;
         if (wcsncmp(argv[1], L"reset", 5) == 0) {
             transmo.npc_id = INT_MAX;
-        }
-        else if (GuiUtils::ParseInt(argv[1], &iscale)) {
-            if (!ParseScale(iscale, transmo))
-                return;
+        } else if (GuiUtils::ParseInt(argv[1], &iscale)) {
+            if (!ParseScale(iscale, transmo)) return;
         } else if (!GetNPCInfoByName(argv[1], transmo)) {
             Log::Error("Unknown transmo '%ls'", argv[1]);
             return;
         }
         if (argc > 2 && GuiUtils::ParseInt(argv[2], &iscale)) {
-            if (!ParseScale(iscale, transmo))
-                return;
+            if (!ParseScale(iscale, transmo)) return;
         }
-    }
-    else {
-        if (!GetTargetTransmoInfo(transmo))
-            return;
+    } else {
+        if (!GetTargetTransmoInfo(transmo)) return;
     }
     for (GW::HeroPartyMember& p : pInfo->heroes) {
         TransmoAgent(p.agent_id, transmo);
@@ -1580,13 +1506,11 @@ bool ChatCommands::ParseScale(int scale, PendingTransmo& transmo) {
         return false;
     }
     transmo.scale = static_cast<DWORD>(scale) << 24;
-    if (!transmo.npc_id)
-        transmo.npc_id = INT_MAX - 1;
+    if (!transmo.npc_id) transmo.npc_id = INT_MAX - 1;
     return true;
 }
 
 void ChatCommands::CmdTransmoTarget(const wchar_t*, int argc, LPWSTR* argv) {
-
     const GW::AgentLiving* const target = GW::Agents::GetTargetAsAgentLiving();
     if (argc < 2) {
         Log::Error("Missing /transmotarget argument");
@@ -1600,17 +1524,14 @@ void ChatCommands::CmdTransmoTarget(const wchar_t*, int argc, LPWSTR* argv) {
     int iscale;
     if (wcsncmp(argv[1], L"reset", 5) == 0) {
         transmo.npc_id = INT_MAX;
-    }
-    else if (GuiUtils::ParseInt(argv[1], &iscale)) {
-        if (!ParseScale(iscale, transmo))
-            return;
+    } else if (GuiUtils::ParseInt(argv[1], &iscale)) {
+        if (!ParseScale(iscale, transmo)) return;
     } else if (!GetNPCInfoByName(argv[1], transmo)) {
         Log::Error("Unknown transmo '%ls'", argv[1]);
         return;
     }
     if (argc > 2 && GuiUtils::ParseInt(argv[2], &iscale)) {
-        if (!ParseScale(iscale, transmo))
-            return;
+        if (!ParseScale(iscale, transmo)) return;
     }
     TransmoAgent(target->agent_id, transmo);
 }
@@ -1629,7 +1550,7 @@ void ChatCommands::CmdHom(const wchar_t* message, int argc, LPWSTR*) {
     wchar_t player_name[20]{};
     if (argc > 1) {
         std::wstring args = GetRemainingArgsWstr(message, 1);
-        
+
         if (args == L"me") {
             wcscpy(player_name, GW::PlayerMgr::GetPlayerName(0));
             return GetAchievements(player_name);
@@ -1651,37 +1572,30 @@ void ChatCommands::CmdHom(const wchar_t* message, int argc, LPWSTR*) {
     }
 }
 
-void ChatCommands::CmdTransmo(const wchar_t *, int argc, LPWSTR *argv) {
+void ChatCommands::CmdTransmo(const wchar_t*, int argc, LPWSTR* argv) {
     PendingTransmo transmo;
 
     if (argc > 1) {
         int iscale;
         if (wcsncmp(argv[1], L"reset", 5) == 0) {
             transmo.npc_id = INT_MAX;
-        }
-        else if(GuiUtils::ParseInt(argv[1], &iscale)) {
-            if (!ParseScale(iscale, transmo))
-                return;
+        } else if (GuiUtils::ParseInt(argv[1], &iscale)) {
+            if (!ParseScale(iscale, transmo)) return;
         } else if (!GetNPCInfoByName(argv[1], transmo)) {
             Log::Error("unknown transmo '%ls'", argv[1]);
             return;
         }
         if (argc > 2 && GuiUtils::ParseInt(argv[2], &iscale)) {
-            if (!ParseScale(iscale, transmo))
-                return;
+            if (!ParseScale(iscale, transmo)) return;
         }
-    }
-    else {
-        if (!GetTargetTransmoInfo(transmo))
-            return;
+    } else {
+        if (!GetTargetTransmoInfo(transmo)) return;
     }
     TransmoAgent(GW::Agents::GetPlayerId(), transmo);
 }
-bool ChatCommands::GetTargetTransmoInfo(PendingTransmo &transmo)
-{
+bool ChatCommands::GetTargetTransmoInfo(PendingTransmo& transmo) {
     const GW::AgentLiving* const target = GW::Agents::GetTargetAsAgentLiving();
-    if (!target)
-        return false;
+    if (!target) return false;
     transmo.npc_id = target->player_number;
     if (target->transmog_npc_id & 0x20000000)
         transmo.npc_id = target->transmog_npc_id ^ 0x20000000;
@@ -1690,8 +1604,7 @@ bool ChatCommands::GetTargetTransmoInfo(PendingTransmo &transmo)
     return true;
 }
 
-void ChatCommands::TargetNearest(const wchar_t* model_id_or_name, TargetType type)
-{
+void ChatCommands::TargetNearest(const wchar_t* model_id_or_name, TargetType type) {
     uint32_t model_id = 0;
     uint32_t index = 0; // 0=nearest. 1=first by id, 2=second by id, etc.
 
@@ -1712,36 +1625,32 @@ void ChatCommands::TargetNearest(const wchar_t* model_id_or_name, TargetType typ
     // target nearest agent
     const GW::AgentArray* agents = GW::Agents::GetAgentArray();
     const GW::AgentLiving* const me = agents ? GW::Agents::GetPlayerAsAgentLiving() : nullptr;
-    if (me == nullptr)
-        return;
+    if (me == nullptr) return;
 
     float distance = GW::Constants::SqrRange::Compass;
     size_t closest = 0;
     size_t count = 0;
 
-    for (const GW::Agent * agent : *agents) {
-        if (!agent || agent == me)
-            continue;
+    for (const GW::Agent* agent : *agents) {
+        if (!agent || agent == me) continue;
         switch (type) {
             case Gadget: {
                 // Target gadget by gadget id
                 const GW::AgentGadget* const gadget = agent->GetAsAgentGadget();
-                if (!gadget || (model_id && gadget->gadget_id != model_id))
-                    continue;
+                if (!gadget || (model_id && gadget->gadget_id != model_id)) continue;
             } break;
             case Item: {
                 // Target item by model id
                 const GW::AgentItem* const item_agent = agent->GetAsAgentItem();
-                if (!item_agent)
-                    continue;
+                if (!item_agent) continue;
                 const GW::Item* const item = GW::Items::GetItemById(item_agent->item_id);
-                if (!item || (model_id && item->model_id != model_id))
-                    continue;
+                if (!item || (model_id && item->model_id != model_id)) continue;
             } break;
             case Npc: {
                 // Target npc by model id
                 const GW::AgentLiving* const living_agent = agent->GetAsAgentLiving();
-                if (!living_agent || !living_agent->IsNPC() || !living_agent->GetIsAlive() || (model_id && living_agent->player_number != model_id))
+                if (!living_agent || !living_agent->IsNPC() || !living_agent->GetIsAlive() ||
+                    (model_id && living_agent->player_number != model_id))
                     continue;
             } break;
             case Player: {
@@ -1753,11 +1662,11 @@ void ChatCommands::TargetNearest(const wchar_t* model_id_or_name, TargetType typ
             case Living: {
                 // Target any living agent by model id
                 const GW::AgentLiving* const living_agent = agent->GetAsAgentLiving();
-                if (!living_agent || !living_agent->GetIsAlive() || (model_id && living_agent->player_number != model_id))
+                if (!living_agent || !living_agent->GetIsAlive() ||
+                    (model_id && living_agent->player_number != model_id))
                     continue;
             } break;
-            default:
-                continue;
+            default: continue;
         }
         if (index == 0) { // target closest
             const float newDistance = GW::GetSquareDistance(me->pos, agent->pos);
@@ -1773,36 +1682,31 @@ void ChatCommands::TargetNearest(const wchar_t* model_id_or_name, TargetType typ
             }
         }
     }
-    if(closest) GW::Agents::ChangeTarget(closest);
+    if (closest) GW::Agents::ChangeTarget(closest);
 }
 
-void ChatCommands::CmdTransmoAgent(const wchar_t* , int argc, LPWSTR* argv) {
-    if(argc < 3)
-        return Log::Error("Missing /transmoagent argument");
+void ChatCommands::CmdTransmoAgent(const wchar_t*, int argc, LPWSTR* argv) {
+    if (argc < 3) return Log::Error("Missing /transmoagent argument");
     int iagent_id = 0;
-    if(!GuiUtils::ParseInt(argv[1], &iagent_id) || iagent_id < 0)
-        return Log::Error("Invalid /transmoagent agent_id");
+    if (!GuiUtils::ParseInt(argv[1], &iagent_id) || iagent_id < 0) return Log::Error("Invalid /transmoagent agent_id");
     PendingTransmo transmo;
     uint32_t agent_id = static_cast<uint32_t>(iagent_id);
     int iscale;
     if (wcsncmp(argv[2], L"reset", 5) == 0) {
         transmo.npc_id = INT_MAX;
-    }
-    else if (GuiUtils::ParseInt(argv[2], &iscale)) {
-        if (!ParseScale(iscale, transmo))
-            return;
+    } else if (GuiUtils::ParseInt(argv[2], &iscale)) {
+        if (!ParseScale(iscale, transmo)) return;
     } else if (!GetNPCInfoByName(argv[2], transmo)) {
         Log::Error("unknown transmo '%s'", argv[1]);
         return;
     }
     if (argc > 4 && GuiUtils::ParseInt(argv[3], &iscale)) {
-        if (!ParseScale(iscale, transmo))
-            return;
+        if (!ParseScale(iscale, transmo)) return;
     }
     TransmoAgent(agent_id, transmo);
 }
 
-void ChatCommands::CmdResize(const wchar_t *message, int argc, LPWSTR *argv) {
+void ChatCommands::CmdResize(const wchar_t* message, int argc, LPWSTR* argv) {
     UNREFERENCED_PARAMETER(message);
     if (argc != 3) {
         Log::Error("The syntax is /resize width height");
@@ -1829,136 +1733,129 @@ void ChatCommands::CmdReapplyTitle(const wchar_t* message, int argc, LPWSTR* arg
         }
         goto apply;
     }
-    if (!IsMapReady())
-        return;
+    if (!IsMapReady()) return;
 
     switch (GW::Map::GetMapID()) {
-    case GW::Constants::MapID::Alcazia_Tangle:
-    case GW::Constants::MapID::Arbor_Bay:
-    case GW::Constants::MapID::Gadds_Encampment_outpost:
-    case GW::Constants::MapID::Magus_Stones:
-    case GW::Constants::MapID::Rata_Sum_outpost:
-    case GW::Constants::MapID::Riven_Earth:
-    case GW::Constants::MapID::Sparkfly_Swamp:
-    case GW::Constants::MapID::Tarnished_Haven_outpost:
-    case GW::Constants::MapID::Umbral_Grotto_outpost:
-    case GW::Constants::MapID::Verdant_Cascades:
-    case GW::Constants::MapID::Vloxs_Falls:
-        title_id = (uint32_t)GW::Constants::TitleID::Asuran;
-        break;
-    case GW::Constants::MapID::A_Gate_Too_Far_Level_1:
-    case GW::Constants::MapID::A_Gate_Too_Far_Level_2:
-    case GW::Constants::MapID::A_Gate_Too_Far_Level_3:
-    case GW::Constants::MapID::A_Time_for_Heroes:
-    case GW::Constants::MapID::Central_Transfer_Chamber_outpost:
-    case GW::Constants::MapID::Destructions_Depths_Level_1:
-    case GW::Constants::MapID::Destructions_Depths_Level_2:
-    case GW::Constants::MapID::Destructions_Depths_Level_3:
-    case GW::Constants::MapID::Genius_Operated_Living_Enchanted_Manifestation:
-    case GW::Constants::MapID::Glints_Challenge_mission:
-    case GW::Constants::MapID::Ravens_Point_Level_1:
-    case GW::Constants::MapID::Ravens_Point_Level_2:
-    case GW::Constants::MapID::Ravens_Point_Level_3:
-        title_id = (uint32_t)GW::Constants::TitleID::Deldrimor;
-        break;
-    case GW::Constants::MapID::Attack_of_the_Nornbear:
-    case GW::Constants::MapID::Bjora_Marches:
-    case GW::Constants::MapID::Blood_Washes_Blood:
-    case GW::Constants::MapID::Boreal_Station_outpost:
-    case GW::Constants::MapID::Cold_as_Ice:
-    case GW::Constants::MapID::Curse_of_the_Nornbear:
-    case GW::Constants::MapID::Drakkar_Lake:
-    case GW::Constants::MapID::Eye_of_the_North_outpost:
-    case GW::Constants::MapID::Gunnars_Hold_outpost:
-    case GW::Constants::MapID::Ice_Cliff_Chasms:
-    case GW::Constants::MapID::Jaga_Moraine:
-    case GW::Constants::MapID::Mano_a_Norn_o:
-    case GW::Constants::MapID::Norrhart_Domains:
-    case GW::Constants::MapID::Olafstead_outpost:
-    case GW::Constants::MapID::Service_In_Defense_of_the_Eye:
-    case GW::Constants::MapID::Sifhalla_outpost:
-    case GW::Constants::MapID::The_Norn_Fighting_Tournament:
-    case GW::Constants::MapID::Varajar_Fells:
-        // @todo: case MapID for Bear Club for Women/Men
-        title_id = (uint32_t)GW::Constants::TitleID::Norn;
-        break;
-    case GW::Constants::MapID::Against_the_Charr:
-    case GW::Constants::MapID::Ascalon_City_outpost:
-    case GW::Constants::MapID::Assault_on_the_Stronghold:
-    case GW::Constants::MapID::Cathedral_of_Flames_Level_1:
-    case GW::Constants::MapID::Cathedral_of_Flames_Level_2:
-    case GW::Constants::MapID::Cathedral_of_Flames_Level_3:
-    case GW::Constants::MapID::Dalada_Uplands:
-    case GW::Constants::MapID::Diessa_Lowlands:
-    case GW::Constants::MapID::Doomlore_Shrine_outpost:
-    case GW::Constants::MapID::Dragons_Gullet:
-    case GW::Constants::MapID::Eastern_Frontier:
-    case GW::Constants::MapID::Flame_Temple_Corridor:
-    case GW::Constants::MapID::Fort_Ranik:
-    case GW::Constants::MapID::Frontier_Gate_outpost:
-    case GW::Constants::MapID::Grendich_Courthouse_outpost:
-    case GW::Constants::MapID::Grothmar_Wardowns:
-    case GW::Constants::MapID::Longeyes_Ledge_outpost:
-    case GW::Constants::MapID::Nolani_Academy:
-    case GW::Constants::MapID::Old_Ascalon:
-    case GW::Constants::MapID::Piken_Square_outpost:
-    case GW::Constants::MapID::Regent_Valley:
-    case GW::Constants::MapID::Rragars_Menagerie_Level_1:
-    case GW::Constants::MapID::Rragars_Menagerie_Level_2:
-    case GW::Constants::MapID::Rragars_Menagerie_Level_3:
-    case GW::Constants::MapID::Ruins_of_Surmia:
-    case GW::Constants::MapID::Sacnoth_Valley:
-    case GW::Constants::MapID::Sardelac_Sanitarium_outpost:
-    case GW::Constants::MapID::The_Breach:
-    case GW::Constants::MapID::The_Great_Northern_Wall:
-    case GW::Constants::MapID::Warband_Training:
-    case GW::Constants::MapID::Warband_of_Brothers_Level_1:
-    case GW::Constants::MapID::Warband_of_Brothers_Level_2:
-    case GW::Constants::MapID::Warband_of_Brothers_Level_3:
-        title_id = (uint32_t)GW::Constants::TitleID::Vanguard;
-        break;
-    case GW::Constants::MapID::Abaddons_Gate:
-    case GW::Constants::MapID::Basalt_Grotto_outpost:
-    case GW::Constants::MapID::Bone_Palace_outpost:
-    case GW::Constants::MapID::Crystal_Overlook:
-    case GW::Constants::MapID::Depths_of_Madness:
-    case GW::Constants::MapID::Domain_of_Anguish:
-    case GW::Constants::MapID::Domain_of_Fear:
-    case GW::Constants::MapID::Domain_of_Pain:
-    case GW::Constants::MapID::Domain_of_Secrets:
-    case GW::Constants::MapID::Dzagonur_Bastion:
-    case GW::Constants::MapID::Forum_Highlands:
-    case GW::Constants::MapID::Gate_of_Desolation:
-    case GW::Constants::MapID::Gate_of_Fear_outpost:
-    case GW::Constants::MapID::Gate_of_Madness:
-    case GW::Constants::MapID::Gate_of_Pain:
-    case GW::Constants::MapID::Gate_of_Secrets_outpost:
-    case GW::Constants::MapID::Gate_of_Torment_outpost:
-    case GW::Constants::MapID::Gate_of_the_Nightfallen_Lands_outpost:
-    case GW::Constants::MapID::Grand_Court_of_Sebelkeh:
-    case GW::Constants::MapID::Heart_of_Abaddon:
-    case GW::Constants::MapID::Jennurs_Horde:
-    case GW::Constants::MapID::Jokos_Domain:
-    case GW::Constants::MapID::Lair_of_the_Forgotten_outpost:
-    case GW::Constants::MapID::Nightfallen_Coast:
-    case GW::Constants::MapID::Nightfallen_Garden:
-    case GW::Constants::MapID::Nightfallen_Jahai:
-    case GW::Constants::MapID::Nundu_Bay:
-    case GW::Constants::MapID::Poisoned_Outcrops:
-    case GW::Constants::MapID::Remains_of_Sahlahja:
-    case GW::Constants::MapID::Ruins_of_Morah:
-    case GW::Constants::MapID::The_Alkali_Pan:
-    case GW::Constants::MapID::The_Mirror_of_Lyss:
-    case GW::Constants::MapID::The_Mouth_of_Torment_outpost:
-    case GW::Constants::MapID::The_Ruptured_Heart:
-    case GW::Constants::MapID::The_Shadow_Nexus:
-    case GW::Constants::MapID::The_Shattered_Ravines:
-    case GW::Constants::MapID::The_Sulfurous_Wastes:
-    case GW::Constants::MapID::Throne_of_Secrets:
-    case GW::Constants::MapID::Vehtendi_Valley:
-    case GW::Constants::MapID::Yatendi_Canyons:
-        title_id = (uint32_t)GW::Constants::TitleID::Lightbringer;
-        break;
+        case GW::Constants::MapID::Alcazia_Tangle:
+        case GW::Constants::MapID::Arbor_Bay:
+        case GW::Constants::MapID::Gadds_Encampment_outpost:
+        case GW::Constants::MapID::Magus_Stones:
+        case GW::Constants::MapID::Rata_Sum_outpost:
+        case GW::Constants::MapID::Riven_Earth:
+        case GW::Constants::MapID::Sparkfly_Swamp:
+        case GW::Constants::MapID::Tarnished_Haven_outpost:
+        case GW::Constants::MapID::Umbral_Grotto_outpost:
+        case GW::Constants::MapID::Verdant_Cascades:
+        case GW::Constants::MapID::Vloxs_Falls: title_id = (uint32_t)GW::Constants::TitleID::Asuran; break;
+        case GW::Constants::MapID::A_Gate_Too_Far_Level_1:
+        case GW::Constants::MapID::A_Gate_Too_Far_Level_2:
+        case GW::Constants::MapID::A_Gate_Too_Far_Level_3:
+        case GW::Constants::MapID::A_Time_for_Heroes:
+        case GW::Constants::MapID::Central_Transfer_Chamber_outpost:
+        case GW::Constants::MapID::Destructions_Depths_Level_1:
+        case GW::Constants::MapID::Destructions_Depths_Level_2:
+        case GW::Constants::MapID::Destructions_Depths_Level_3:
+        case GW::Constants::MapID::Genius_Operated_Living_Enchanted_Manifestation:
+        case GW::Constants::MapID::Glints_Challenge_mission:
+        case GW::Constants::MapID::Ravens_Point_Level_1:
+        case GW::Constants::MapID::Ravens_Point_Level_2:
+        case GW::Constants::MapID::Ravens_Point_Level_3: title_id = (uint32_t)GW::Constants::TitleID::Deldrimor; break;
+        case GW::Constants::MapID::Attack_of_the_Nornbear:
+        case GW::Constants::MapID::Bjora_Marches:
+        case GW::Constants::MapID::Blood_Washes_Blood:
+        case GW::Constants::MapID::Boreal_Station_outpost:
+        case GW::Constants::MapID::Cold_as_Ice:
+        case GW::Constants::MapID::Curse_of_the_Nornbear:
+        case GW::Constants::MapID::Drakkar_Lake:
+        case GW::Constants::MapID::Eye_of_the_North_outpost:
+        case GW::Constants::MapID::Gunnars_Hold_outpost:
+        case GW::Constants::MapID::Ice_Cliff_Chasms:
+        case GW::Constants::MapID::Jaga_Moraine:
+        case GW::Constants::MapID::Mano_a_Norn_o:
+        case GW::Constants::MapID::Norrhart_Domains:
+        case GW::Constants::MapID::Olafstead_outpost:
+        case GW::Constants::MapID::Service_In_Defense_of_the_Eye:
+        case GW::Constants::MapID::Sifhalla_outpost:
+        case GW::Constants::MapID::The_Norn_Fighting_Tournament:
+        case GW::Constants::MapID::Varajar_Fells:
+            // @todo: case MapID for Bear Club for Women/Men
+            title_id = (uint32_t)GW::Constants::TitleID::Norn;
+            break;
+        case GW::Constants::MapID::Against_the_Charr:
+        case GW::Constants::MapID::Ascalon_City_outpost:
+        case GW::Constants::MapID::Assault_on_the_Stronghold:
+        case GW::Constants::MapID::Cathedral_of_Flames_Level_1:
+        case GW::Constants::MapID::Cathedral_of_Flames_Level_2:
+        case GW::Constants::MapID::Cathedral_of_Flames_Level_3:
+        case GW::Constants::MapID::Dalada_Uplands:
+        case GW::Constants::MapID::Diessa_Lowlands:
+        case GW::Constants::MapID::Doomlore_Shrine_outpost:
+        case GW::Constants::MapID::Dragons_Gullet:
+        case GW::Constants::MapID::Eastern_Frontier:
+        case GW::Constants::MapID::Flame_Temple_Corridor:
+        case GW::Constants::MapID::Fort_Ranik:
+        case GW::Constants::MapID::Frontier_Gate_outpost:
+        case GW::Constants::MapID::Grendich_Courthouse_outpost:
+        case GW::Constants::MapID::Grothmar_Wardowns:
+        case GW::Constants::MapID::Longeyes_Ledge_outpost:
+        case GW::Constants::MapID::Nolani_Academy:
+        case GW::Constants::MapID::Old_Ascalon:
+        case GW::Constants::MapID::Piken_Square_outpost:
+        case GW::Constants::MapID::Regent_Valley:
+        case GW::Constants::MapID::Rragars_Menagerie_Level_1:
+        case GW::Constants::MapID::Rragars_Menagerie_Level_2:
+        case GW::Constants::MapID::Rragars_Menagerie_Level_3:
+        case GW::Constants::MapID::Ruins_of_Surmia:
+        case GW::Constants::MapID::Sacnoth_Valley:
+        case GW::Constants::MapID::Sardelac_Sanitarium_outpost:
+        case GW::Constants::MapID::The_Breach:
+        case GW::Constants::MapID::The_Great_Northern_Wall:
+        case GW::Constants::MapID::Warband_Training:
+        case GW::Constants::MapID::Warband_of_Brothers_Level_1:
+        case GW::Constants::MapID::Warband_of_Brothers_Level_2:
+        case GW::Constants::MapID::Warband_of_Brothers_Level_3:
+            title_id = (uint32_t)GW::Constants::TitleID::Vanguard;
+            break;
+        case GW::Constants::MapID::Abaddons_Gate:
+        case GW::Constants::MapID::Basalt_Grotto_outpost:
+        case GW::Constants::MapID::Bone_Palace_outpost:
+        case GW::Constants::MapID::Crystal_Overlook:
+        case GW::Constants::MapID::Depths_of_Madness:
+        case GW::Constants::MapID::Domain_of_Anguish:
+        case GW::Constants::MapID::Domain_of_Fear:
+        case GW::Constants::MapID::Domain_of_Pain:
+        case GW::Constants::MapID::Domain_of_Secrets:
+        case GW::Constants::MapID::Dzagonur_Bastion:
+        case GW::Constants::MapID::Forum_Highlands:
+        case GW::Constants::MapID::Gate_of_Desolation:
+        case GW::Constants::MapID::Gate_of_Fear_outpost:
+        case GW::Constants::MapID::Gate_of_Madness:
+        case GW::Constants::MapID::Gate_of_Pain:
+        case GW::Constants::MapID::Gate_of_Secrets_outpost:
+        case GW::Constants::MapID::Gate_of_Torment_outpost:
+        case GW::Constants::MapID::Gate_of_the_Nightfallen_Lands_outpost:
+        case GW::Constants::MapID::Grand_Court_of_Sebelkeh:
+        case GW::Constants::MapID::Heart_of_Abaddon:
+        case GW::Constants::MapID::Jennurs_Horde:
+        case GW::Constants::MapID::Jokos_Domain:
+        case GW::Constants::MapID::Lair_of_the_Forgotten_outpost:
+        case GW::Constants::MapID::Nightfallen_Coast:
+        case GW::Constants::MapID::Nightfallen_Garden:
+        case GW::Constants::MapID::Nightfallen_Jahai:
+        case GW::Constants::MapID::Nundu_Bay:
+        case GW::Constants::MapID::Poisoned_Outcrops:
+        case GW::Constants::MapID::Remains_of_Sahlahja:
+        case GW::Constants::MapID::Ruins_of_Morah:
+        case GW::Constants::MapID::The_Alkali_Pan:
+        case GW::Constants::MapID::The_Mirror_of_Lyss:
+        case GW::Constants::MapID::The_Mouth_of_Torment_outpost:
+        case GW::Constants::MapID::The_Ruptured_Heart:
+        case GW::Constants::MapID::The_Shadow_Nexus:
+        case GW::Constants::MapID::The_Shattered_Ravines:
+        case GW::Constants::MapID::The_Sulfurous_Wastes:
+        case GW::Constants::MapID::Throne_of_Secrets:
+        case GW::Constants::MapID::Vehtendi_Valley:
+        case GW::Constants::MapID::Yatendi_Canyons: title_id = (uint32_t)GW::Constants::TitleID::Lightbringer; break;
     }
 apply:
     GW::Constants::TitleID current_title = GW::PlayerMgr::GetActiveTitleId();
@@ -1969,25 +1866,20 @@ apply:
         GW::PlayerMgr::RemoveActiveTitle();
     }
     switch (title_id) {
-    case CMDTITLE_REMOVE_CURRENT:
-        break;
-    default:
-        if (title_id > (uint32_t)GW::Constants::TitleID::Codex) {
-            Log::Error("Invalid title_id %d",title_id);
-            return;
-        }
-        GW::PlayerMgr::SetActiveTitle(static_cast<GW::Constants::TitleID>(title_id));
-        break;
+        case CMDTITLE_REMOVE_CURRENT: break;
+        default:
+            if (title_id > (uint32_t)GW::Constants::TitleID::Codex) {
+                Log::Error("Invalid title_id %d", title_id);
+                return;
+            }
+            GW::PlayerMgr::SetActiveTitle(static_cast<GW::Constants::TitleID>(title_id));
+            break;
     }
-
 }
-void ChatCommands::CmdHeroBehaviour(const wchar_t*, int argc, LPWSTR* argv)
-{
-    if (GW::Map::GetInstanceType() == GW::Constants::InstanceType::Loading)
-        return;
+void ChatCommands::CmdHeroBehaviour(const wchar_t*, int argc, LPWSTR* argv) {
+    if (GW::Map::GetInstanceType() == GW::Constants::InstanceType::Loading) return;
     // Argument validation
-    if (argc < 2)
-        return Log::Error("Invalid argument for /hero. It can be one of: avoid | guard | attack");
+    if (argc < 2) return Log::Error("Invalid argument for /hero. It can be one of: avoid | guard | attack");
     // set behavior based on command message
     GW::HeroBehavior behaviour = GW::HeroBehavior::Guard; // guard by default
     const std::wstring arg1 = GuiUtils::ToLower(argv[1]);
@@ -2003,8 +1895,7 @@ void ChatCommands::CmdHeroBehaviour(const wchar_t*, int argc, LPWSTR* argv)
 
     GW::WorldContext* w = GW::WorldContext::instance();
     GW::HeroFlagArray* f = w ? &w->hero_flags : nullptr;
-    if (!(f && f->size()))
-        return;
+    if (!(f && f->size())) return;
     for (auto& hero : *f) {
         GW::PartyMgr::SetHeroBehavior(hero.agent_id, behaviour);
     }
@@ -2014,38 +1905,31 @@ void ChatCommands::CmdVolume(const wchar_t*, int argc, LPWSTR* argv) {
     wchar_t* value;
     GW::UI::Preference pref;
     switch (argc) {
-    case 2:
-        pref = GW::UI::Preference::Preference_MasterVolume;
-        value = argv[1];
-        break;
-    case 3: {
-        wchar_t* pref_str = argv[1];
-        if (wcscmp(pref_str, L"master") == 0) {
+        case 2:
             pref = GW::UI::Preference::Preference_MasterVolume;
+            value = argv[1];
+            break;
+        case 3: {
+            wchar_t* pref_str = argv[1];
+            if (wcscmp(pref_str, L"master") == 0) {
+                pref = GW::UI::Preference::Preference_MasterVolume;
+            } else if (wcscmp(pref_str, L"music") == 0) {
+                pref = GW::UI::Preference::Preference_MusicVolume;
+            } else if (wcscmp(pref_str, L"background") == 0) {
+                pref = GW::UI::Preference::Preference_BackgroundVolume;
+            } else if (wcscmp(pref_str, L"effects") == 0) {
+                pref = GW::UI::Preference::Preference_EffectsVolume;
+            } else if (wcscmp(pref_str, L"dialog") == 0) {
+                pref = GW::UI::Preference::Preference_DialogVolume;
+            } else if (wcscmp(pref_str, L"ui") == 0) {
+                pref = GW::UI::Preference::Preference_UIVolume;
+            } else {
+                return Log::Error(syntax);
+            }
+            value = argv[2];
+            break;
         }
-        else if (wcscmp(pref_str, L"music") == 0) {
-            pref = GW::UI::Preference::Preference_MusicVolume;
-        }
-        else if (wcscmp(pref_str, L"background") == 0) {
-            pref = GW::UI::Preference::Preference_BackgroundVolume;
-        }
-        else if (wcscmp(pref_str, L"effects") == 0) {
-            pref = GW::UI::Preference::Preference_EffectsVolume;
-        }
-        else if (wcscmp(pref_str, L"dialog") == 0) {
-            pref = GW::UI::Preference::Preference_DialogVolume;
-        }
-        else if (wcscmp(pref_str, L"ui") == 0) {
-            pref = GW::UI::Preference::Preference_UIVolume;
-        }
-        else {
-            return Log::Error(syntax);
-        }
-        value = argv[2];
-        break;
-    }
-    default:
-        return Log::Error(syntax);
+        default: return Log::Error(syntax);
     }
     uint32_t value_dec;
     if (!GuiUtils::ParseUInt(value, &value_dec, 10)) {
@@ -2057,13 +1941,9 @@ void ChatCommands::CmdVolume(const wchar_t*, int argc, LPWSTR* argv) {
     GW::UI::SetPreference(pref, value_dec);
 }
 
-void ChatCommands::CmdSetHardMode(const wchar_t*, int , LPWSTR* ) {
-    GW::PartyMgr::SetHardMode(true);
-}
+void ChatCommands::CmdSetHardMode(const wchar_t*, int, LPWSTR*) { GW::PartyMgr::SetHardMode(true); }
 
-void ChatCommands::CmdSetNormalMode(const wchar_t*, int , LPWSTR* ) {
-    GW::PartyMgr::SetHardMode(false);
-}
+void ChatCommands::CmdSetNormalMode(const wchar_t*, int, LPWSTR*) { GW::PartyMgr::SetHardMode(false); }
 
 void ChatCommands::CmdAnimation(const wchar_t*, int argc, LPWSTR* argv) {
     const char* syntax = "Syntax: '/animation [me|target] [animation_id (1-2076)]'";
@@ -2078,16 +1958,14 @@ void ChatCommands::CmdAnimation(const wchar_t*, int argc, LPWSTR* argv) {
         agentid = agent->agent_id;
     } else if (arg1 == L"target") {
         GW::AgentLiving* agent = GW::Agents::GetTargetAsAgentLiving();
-        if(!agent)
-            return Log::Error("No target chosen");
+        if (!agent) return Log::Error("No target chosen");
         agentid = agent->agent_id;
     } else {
         return Log::Error(syntax);
     }
 
     uint32_t animationid = 0;
-    if (!GuiUtils::ParseUInt(argv[2],&animationid) || animationid < 1 || animationid > 2076)
-        return Log::Error(syntax);
+    if (!GuiUtils::ParseUInt(argv[2], &animationid) || animationid < 1 || animationid > 2076) return Log::Error(syntax);
 
     GW::GameThread::Enqueue([animationid, agentid]() {
         GW::Packet::StoC::GenericValue packet;
@@ -2097,7 +1975,7 @@ void ChatCommands::CmdAnimation(const wchar_t*, int argc, LPWSTR* argv) {
         GW::StoC::EmulatePacket(&packet);
     });
 }
-void ChatCommands::CmdMute(const wchar_t*, int , LPWSTR* ) {
+void ChatCommands::CmdMute(const wchar_t*, int, LPWSTR*) {
     if (SetMuted_Func) {
         SetMuted_Func(!(*is_muted));
         PostMuted_Func(0);
