@@ -6,6 +6,7 @@
 #include <GWCA/GameContainers/GamePos.h>
 
 #include <GWCA/Managers/UIMgr.h>
+#include <GWCA/Managers/SkillbarMgr.h>
 
 #include <Utils/GuiUtils.h>
 
@@ -133,12 +134,23 @@ private:
         }
     } npc_to_find;
 
-    struct SkillToUse {
+    struct BaseUseSkill
+    {
         uint32_t slot = 0; // 1-8 range
-        float skill_usage_delay = 0.f;
+        float skill_usage_delay = 0.0F;
         clock_t skill_timer = clock();
-        void Update();
-    } skill_to_use;
+
+        virtual void Update() = 0;
+        void CastSelectedSkill(const uint32_t current_energy,
+                               const GW::Skillbar *skillbar,
+                               const uint32_t target_id = 0);
+    };
+
+    struct UseSkill : public BaseUseSkill
+    {
+        void Update() override;
+    };
+    UseSkill useskill;
 
     struct QuestPing {
         GuiUtils::EncString name;
