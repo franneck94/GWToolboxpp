@@ -239,7 +239,10 @@ void DialogModule::SendDialog(const uint32_t dialog_id, clock_t time) {
 }
 
 void DialogModule::SendDialog(uint32_t dialog_id) {
-    GW::Agents::SendDialog(dialog_id);
+    if (!GW::Agents::SendDialog(dialog_id))
+    {
+        Log::Info("using Old Send Dialog :)");
+    }
 }
 
 void DialogModule::SendDialogs(std::initializer_list<uint32_t> dialog_ids) {

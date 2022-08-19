@@ -1419,10 +1419,13 @@ void HotkeyAction::Execute()
             break;
         case HotkeyAction::OpenLockedChest: {
             if (isExplorable()) {
-                GW::Agent* target = GW::Agents::GetTarget();
-                if (target && target->GetIsGadgetType()) {
+                GW::Agent *target = GW::Agents::GetTarget();
+                if (target && target->type == 0x200) {
                     GW::Agents::GoSignpost(target);
-                    GW::Items::OpenLockedChest();
+                    if (!GW::Items::OpenLockedChest())
+                    {
+                        Log::Info("Using old open chest :)");
+                    }
                 }
             }
             break;
