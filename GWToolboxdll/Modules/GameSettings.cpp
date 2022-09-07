@@ -2302,7 +2302,7 @@ void GameSettings::OnPartyPlayerJoined(GW::HookStatus* status, GW::Packet::StoC:
 void GameSettings::OnAgentMarker(GW::HookStatus*, GW::Packet::StoC::GenericValue* pak) {
     const GW::Agent* a = GW::Agents::GetAgentByID(pak->agent_id);
     if (a && wcscmp(GW::Agents::GetAgentEncName(a),L"\x8102\x6ED9\xD94E\xBF68\x4409") == 0) {
-        pak->value_id = 12;
+        pak->Value_id = 12;
     }
 }
 
