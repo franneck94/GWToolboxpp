@@ -143,7 +143,7 @@ void EffectRenderer::RemoveTriggeredEffect(uint32_t effect_id, GW::Vec2f* pos) {
 
 void EffectRenderer::PacketCallback(GW::Packet::StoC::GenericValue* pak) {
     if (!initialized) return;
-    if (pak->Value_id != 21) // Effect on agent
+    if (pak->value_id != 21) // Effect on agent
         return;
     auto it = aoe_effect_settings.find(pak->value);
     if (it == aoe_effect_settings.end())
