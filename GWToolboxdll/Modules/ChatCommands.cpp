@@ -141,8 +141,7 @@ namespace {
             const GW::AgentLiving* const agent = static_cast<GW::AgentLiving*>(agents->at(i));
             if (agent == nullptr || agent == me
                 || !agent->GetIsLivingType() || agent->GetIsDead()
-                || agent->allegiance == GW::Constants::Allegiance::Enemy
-                || !GW::Agents::GetIsAgentTargettable(agent))
+                || agent->allegiance == GW::Constants::Allegiance::Enemy)
                 continue;
             const float this_distance = GW::GetSquareDistance(me->pos, agent->pos);
             if (this_distance > max_distance || distance > this_distance)
@@ -709,8 +708,6 @@ void ChatCommands::SearchAgent::Init(const wchar_t* _search, TargetType type) {
         return;
     for (const GW::Agent* agent : *agents) {
         if (!agent) continue;
-        if (!GW::Agents::GetIsAgentTargettable(agent))
-            continue;
         switch (type) {
         case Item:
             if (!agent->GetIsItemType())
@@ -794,16 +791,14 @@ void ChatCommands::SkillToUse::Update() {
     }
     uint32_t lslot = slot - 1;
     const GW::SkillbarSkill& skill = skillbar->skills[lslot];
-    if (skill.skill_id == GW::Constants::SkillID::No_Skill
-        || skill.skill_id == GW::Constants::SkillID::Mystic_Healing
-        || skill.skill_id == GW::Constants::SkillID::Cautery_Signet) {
+    if (skill.skill_id == GW::Constants::SkillID::No_Skill) {
         slot = 0;
         return;
     }
     const GW::Skill& skilldata = *GW::SkillbarMgr::GetSkillConstantData(skill.skill_id);
     if ((skilldata.adrenaline == 0 && skill.GetRecharge() == 0) || (skilldata.adrenaline > 0 && skill.adrenaline_a == skilldata.adrenaline)) {
         GW::SkillbarMgr::UseSkill(lslot, GW::Agents::GetTargetId());
-        skill_usage_delay = std::max(skilldata.activation + skilldata.aftercast, 0.25f); // a small flat delay of .3s for ping and to avoid spamming in case of bad target
+        skill_usage_delay = std::max(skilldata.activation + skilldata.aftercast, 0.1f); // a small flat delay of .3s for ping and to avoid spamming in case of bad target
         skill_timer = clock();
     }
 }
@@ -1722,8 +1717,6 @@ void ChatCommands::TargetNearest(const wchar_t* model_id_or_name, TargetType typ
     
     for (const GW::Agent * agent : *agents) {
         if (!agent || agent == me)
-            continue;
-        if (!GW::Agents::GetIsAgentTargettable(agent))
             continue;
         switch (type) {
             case Gadget: {
