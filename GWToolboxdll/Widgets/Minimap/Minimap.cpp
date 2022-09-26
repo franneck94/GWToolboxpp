@@ -950,10 +950,6 @@ void Minimap::SelectTarget(const GW::Vec2f pos) const
             continue;
         if (agent->GetIsItemType())
             continue;
-        if (agent->GetIsGadgetType() && agent->GetAsAgentGadget()->gadget_id != 8141)
-            continue; // allow locked chests
-        if (!GW::Agents::GetIsAgentTargettable(agent))
-            continue; // block all useless minis
         const float newDistance = GW::GetSquareDistance(pos, agent->pos);
         if (distance > newDistance) {
             distance = newDistance;

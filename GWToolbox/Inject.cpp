@@ -13,7 +13,7 @@
 // If we don't do that, the shield icon doesn't show up, but is there
 // a nice way to add that? (i.e. not through a pragma)
 #pragma comment(linker, "\"/manifestdependency:type='win32' \
-name='Microsoft.Windows.Common-Controls' version='6.0.0.0' \
+name='Microsoft.Windows.Common-Controls' version='6.0.1.0' \
 processorArchitecture='*' publicKeyToken='6595b64144ccf1df' language='*'\"")
 
 struct InjectProcess
