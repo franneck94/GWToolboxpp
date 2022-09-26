@@ -234,7 +234,7 @@ void DialogModule::SendDialog(const uint32_t dialog_id, clock_t time) {
 }
 
 void DialogModule::SendDialog(uint32_t dialog_id) {
-    SendDialog(dialog_id, TIMER_INIT());
+    GW::Agents::SendDialog(dialog_id);
 }
 
 void DialogModule::SendDialogs(std::initializer_list<uint32_t> dialog_ids) {
