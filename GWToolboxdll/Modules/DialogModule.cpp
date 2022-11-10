@@ -169,10 +169,10 @@ void DialogModule::OnDialogSent(const uint32_t dialog_id) {
             }
         }
     }
-    if (IsUWTele(dialog_id)) {
-        queued_dialogs_to_send.erase(GW::Constants::DialogID::UwTeleEnquire);
-        queued_dialogs_to_send.erase(dialog_id - 0x7);
-    }
+    // if (IsUWTele(dialog_id)) {
+    //     queued_dialogs_to_send.erase(GW::Constants::DialogID::UwTeleEnquire);
+    //     queued_dialogs_to_send.erase(dialog_id - 0x7);
+    // }
 }
 
 void DialogModule::Initialize() {
@@ -201,46 +201,13 @@ void DialogModule::Terminate() {
     GW::HookBase::RemoveHook(NPCDialogUICallback_Func);
 }
 
-void DialogModule::SendDialog(const uint32_t dialog_id, clock_t time) {
-    time = time ? time : TIMER_INIT();
-    queued_dialogs_to_send[dialog_id] = time;
-
-    if (IsQuest(dialog_id)) {
-        const uint32_t quest_id = GetQuestID(dialog_id);
-        switch (GetQuestDialogType(dialog_id)) {
-        case QuestDialogType::TAKE: // Dialog is for taking a quest
-            queued_dialogs_to_send[quest_id << 8 | 0x800003] = time;
-            break;
-        case QuestDialogType::REWARD: // Dialog is for accepting a quest reward
-            queued_dialogs_to_send[quest_id << 8 | 0x800006] = time;
-            break;
-        default: return;
-        }
-    }
-
-    if ((dialog_id & 0xf84) == dialog_id && (dialog_id & 0xfff) >> 8 != 0) {
-        // Dialog is for changing profession; queue up the enquire dialog option aswell
-        const uint32_t profession_id = (dialog_id & 0xfff) >> 8;
-        const uint32_t enquire_dialog_id = (profession_id << 8) | 0x85;
-        queued_dialogs_to_send[enquire_dialog_id] = time;
-        return;
-    }
-    
-    if (IsUWTele(dialog_id)) {
-        // Reaper teleport dialog; queue up prerequisites.
-        queued_dialogs_to_send[GW::Constants::DialogID::UwTeleEnquire] = time;
-        queued_dialogs_to_send[dialog_id - 0x7] = time;
-    }
-}
-
 void DialogModule::SendDialog(uint32_t dialog_id) {
     GW::Agents::SendDialog(dialog_id);
 }
 
 void DialogModule::SendDialogs(std::initializer_list<uint32_t> dialog_ids) {
-    const auto timestamp = TIMER_INIT();
     for (const auto dialog_id : dialog_ids) {
-        SendDialog(dialog_id, timestamp);
+        SendDialog(dialog_id);
     }
 }
 
