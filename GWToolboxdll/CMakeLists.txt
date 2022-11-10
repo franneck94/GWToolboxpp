@@ -15,14 +15,31 @@ file(GLOB SOURCES
     "Widgets/Minimap/*.cpp"
     "Windows/*.h"
     "Windows/*.cpp")
+
 source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES ${SOURCES})
 target_sources(GWToolboxdll PRIVATE ${SOURCES})
+
 target_precompile_headers(GWToolboxdll PRIVATE "stdafx.h")
 target_compile_definitions(GWToolboxdll PRIVATE "_USRDLL")
-target_compile_options(GWToolboxdll PRIVATE /W4 /WX /ZI)
 
+target_compile_options(GWToolboxdll PRIVATE /W4 /WX /Gy)
+target_compile_options(GWToolboxdll PRIVATE $<$<NOT:$<CONFIG:Debug>>:/GL>)
+target_compile_options(GWToolboxdll PRIVATE $<$<CONFIG:Debug>:/ZI /Od>)
 
-target_include_directories(GWToolboxdll PRIVATE 
+set_target_properties(GWToolboxdll PROPERTIES
+    VS_GLOBAL_RunCodeAnalysis false
+    VS_GLOBAL_EnableMicrosoftCodeAnalysis true
+    VS_GLOBAL_EnableClangTidyCodeAnalysis false
+)
+
+target_link_options(GWToolboxdll PRIVATE /WX /OPT:REF /OPT:ICF /SAFESEH:NO)
+target_link_options(GWToolboxdll PRIVATE $<$<NOT:$<CONFIG:Debug>>:/LTCG /INCREMENTAL:NO>)
+target_link_options(GWToolboxdll PRIVATE $<$<CONFIG:Debug>:/IGNORE:4098 /OPT:NOREF /OPT:NOICF>)
+target_link_options(GWToolboxdll PRIVATE $<$<CONFIG:RelWithDebInfo>:/OPT:NOICF>)
+target_link_options(GWToolboxdll PRIVATE /IGNORE:4099) # pdb not found for github action
+
+target_include_directories(GWToolboxdll PRIVATE
+    "${PROJECT_SOURCE_DIR}/Dependencies"
     "${CMAKE_CURRENT_SOURCE_DIR}"
     )
 
@@ -32,10 +49,11 @@ include(earcut)
 
 target_link_libraries(GWToolboxdll PRIVATE
     # cmake targets:
+    RestClient
     imgui
+    directxtex
     gwca
-    directx
-	earcut
+    earcut
     utf8proc
     easywsclient
     discord_game_sdk
@@ -43,10 +61,8 @@ target_link_libraries(GWToolboxdll PRIVATE
     simpleini
     imgui::fonts
     IconFontCppHeaders
+
     # libs:
-    Urlmon.lib
-    Shlwapi.lib
-    Wininet.lib
     Dbghelp.lib # for MiniDump
     xinput9_1_0.lib # for Win7 legacy support
     )

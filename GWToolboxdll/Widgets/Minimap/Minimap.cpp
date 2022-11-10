@@ -10,6 +10,7 @@
 #include <GWCA/GameEntities/Hero.h>
 #include <GWCA/GameEntities/Party.h>
 #include <GWCA/GameEntities/Skill.h>
+#include <GWCA/GameEntities/Agent.h>
 
 #include <GWCA/Context/GameContext.h>
 #include <GWCA/Context/PartyContext.h>
@@ -26,7 +27,7 @@
 #include <GWCA/Managers/GameThreadMgr.h>
 
 #include <GWCA/Utilities/Scanner.h>
-#include <GuiUtils.h>
+#include <Utils/GuiUtils.h>
 #include <ImGuiAddons.h>
 #include <Logger.h>
 
@@ -38,6 +39,8 @@
 #endif
 
 namespace {
+    DirectX::XMFLOAT2 gwinch_scale;
+
     enum FlaggingState : uint32_t {
         FlagState_All = 0,
         FlagState_Hero1,
@@ -132,7 +135,7 @@ namespace {
             return nullptr;
         return gamectx->party->player_party;
     }
-
+    GW::UI::WindowPosition* compass_frame = 0;
 }
 
 void Minimap::Terminate()
@@ -164,12 +167,12 @@ void Minimap::Initialize()
     GW::UI::RegisterKeydownCallback(&AgentPinged_Entry, [this](GW::HookStatus* ,uint32_t key) {
         if (key != GW::UI::ControlAction_ReverseCamera)
             return;
-        reverse_camera = true;
+        camera_currently_reversed = true;
         });
     GW::UI::RegisterKeyupCallback(&AgentPinged_Entry, [this](GW::HookStatus*, uint32_t key) {
         if (key != GW::UI::ControlAction_ReverseCamera)
             return;
-        reverse_camera = false;
+        camera_currently_reversed = false;
         });
 
     GW::StoC::RegisterPacketCallback<GW::Packet::StoC::AgentPinged>(&AgentPinged_Entry, [this](GW::HookStatus *, GW::Packet::StoC::AgentPinged *pak) -> void {
@@ -204,32 +207,15 @@ void Minimap::Initialize()
                 effect_renderer.PacketCallback(pak);
         }
     });
-    GW::StoC::RegisterPacketCallback<GW::Packet::StoC::SkillActivate>(&SkillActivate_Entry, &SkillActivateCallback);
-    GW::StoC::RegisterPacketCallback<GW::Packet::StoC::InstanceLoadInfo>(&InstanceLoadInfo_Entry, [this](GW::HookStatus *, GW::Packet::StoC::InstanceLoadInfo *packet) -> void { is_observing = packet->is_observer != 0; });
-    GW::StoC::RegisterPacketCallback<GW::Packet::StoC::InstanceLoadFile>(&InstanceLoadFile_Entry, [this](GW::HookStatus*, GW::Packet::StoC::InstanceLoadFile* packet) -> void {
-        UNREFERENCED_PARAMETER(packet);
-        pmap_renderer.Invalidate();
-        loading = false;
-        // Compass fix to allow hero flagging controls
-        GW::UI::WindowPosition* compass_info = GW::UI::GetWindowPosition(GW::UI::WindowID_Compass);
-        if (compass_info && !compass_info->visible()) {
-            // Note: Wait for a frame to pass before toggling off again to allow the game to initialise the window.
-            compass_fix_pending = true;
-            GW::UI::SetWindowVisible(GW::UI::WindowID_Compass, true);
-        }
-    });
-
-    GW::StoC::RegisterPacketCallback<GW::Packet::StoC::GameSrvTransfer>(&GameSrvTransfer_Entry, [this](GW::HookStatus *, GW::Packet::StoC::GameSrvTransfer *pak) -> void {
-        UNREFERENCED_PARAMETER(pak);
-        loading = true;
-        agent_renderer.auto_target_id = 0;
-    });
-    GW::UI::RegisterUIMessageCallback(&UIMsg_Entry, [this](GW::HookStatus*, uint32_t msgid, void* wParam , void* ) -> void {
-        if (msgid != GW::UI::kChangeTarget)
-            return;
-        GW::UI::ChangeTargetUIMsg* msg = (GW::UI::ChangeTargetUIMsg*)wParam;
-        agent_renderer.auto_target_id = GW::Agents::GetTargetId() ? 0 : msg->auto_target_id;
-    });
+    const GW::UI::UIMessage hook_messages[] = {
+        GW::UI::UIMessage::kMapChange,
+        GW::UI::UIMessage::kMapLoaded,
+        GW::UI::UIMessage::kChangeTarget,
+        GW::UI::UIMessage::kSkillActivated
+    };
+    for (const auto message_id : hook_messages) {
+        GW::UI::RegisterUIMessageCallback(&UIMsg_Entry, message_id, OnUIMessage);
+    }
 
     last_moved = TIMER_INIT();
 
@@ -237,12 +223,40 @@ void Minimap::Initialize()
 
     GW::Chat::CreateCommand(L"flag", &OnFlagHeroCmd);
 }
-void Minimap::SkillActivateCallback(GW::HookStatus*, GW::Packet::StoC::SkillActivate *pak)
-{
-    if (pak->agent_id == GW::Agents::GetPlayerId()) {
-        if (pak->skill_id == (DWORD)GW::Constants::SkillID::Shadow_of_Haste || pak->skill_id == (DWORD)GW::Constants::SkillID::Shadow_Walk) {
-            Instance().shadowstep_location = GW::Agents::GetPlayer()->pos;
+void Minimap::OnUIMessage(GW::HookStatus*, GW::UI::UIMessage msgid, void* wParam, void*) {
+    auto& instance = Instance();
+    switch (msgid) {
+    case GW::UI::UIMessage::kMapLoaded: {
+        instance.pmap_renderer.Invalidate();
+        instance.loading = false;
+        // Compass fix to allow hero flagging controls
+        GW::UI::WindowPosition* compass_info = GW::UI::GetWindowPosition(GW::UI::WindowID_Compass);
+        if (compass_info && !compass_info->visible()) {
+            // Note: Wait for a frame to pass before toggling off again to allow the game to initialise the window.
+            compass_fix_pending = true;
+            GW::UI::SetWindowVisible(GW::UI::WindowID_Compass, true);
         }
+        instance.is_observing = GW::Map::GetIsObserving();
+    } break;
+    case GW::UI::UIMessage::kSkillActivated: {
+        struct Payload {
+            uint32_t agent_id;
+            GW::Constants::SkillID skill_id;
+        } *payload = (Payload*)wParam;
+        if (payload->agent_id == GW::Agents::GetPlayerId()) {
+            if (payload->skill_id == GW::Constants::SkillID::Shadow_of_Haste || payload->skill_id == GW::Constants::SkillID::Shadow_Walk) {
+                instance.shadowstep_location = GW::Agents::GetPlayer()->pos;
+            }
+        }
+    } break;
+    case GW::UI::UIMessage::kMapChange: {
+        instance.loading = true;
+        instance.agent_renderer.auto_target_id = 0;
+    } break;
+    case GW::UI::UIMessage::kChangeTarget: {
+        GW::UI::ChangeTargetUIMsg* msg = (GW::UI::ChangeTargetUIMsg*)wParam;
+        instance.agent_renderer.auto_target_id = GW::Agents::GetTargetId() ? 0 : msg->auto_target_id;
+    } break;
     }
 }
 
@@ -311,7 +325,7 @@ void Minimap::OnFlagHeroCmd(const wchar_t *message, int argc, LPWSTR *argv)
         return;
     }
     const auto& heroarray = GW::GameContext::instance()->party->player_party->heroes;
-    
+
     if (heroarray.valid())
         n_heros = heroarray.size();
     if (n_heros < 1) {
@@ -340,7 +354,7 @@ void Minimap::OnFlagHeroCmd(const wchar_t *message, int argc, LPWSTR *argv)
     if (arg2 == L"toggle") { // "/flag 5 toggle"
         if (is_flagged(f_hero))
             GW::PartyMgr::UnflagHero(f_hero);
-        else 
+        else
             Instance().FlagHero(f_hero);
         return;
     }
@@ -353,16 +367,25 @@ void Minimap::OnFlagHeroCmd(const wchar_t *message, int argc, LPWSTR *argv)
 
 void Minimap::DrawSettingInternal()
 {
-    static char const *minimap_modifier_behavior_combo_str = "Disabled\0Draw\0Target\0Move\0Walk\0\0";
+    constexpr const char* minimap_modifier_behavior_combo_str = "Disabled\0Draw\0Target\0Move\0Walk\0\0";
 
-    ImVec2 winsize(100.0f, 100.0f);
-    ImGuiWindow *window = ImGui::FindWindowByName(Name());
-    if (window) {
-        winsize = window->Size;
+    if (snap_to_compass) {
+        ImGui::NextSpacedElement();
     }
-    if (ImGui::DragFloat("Size", &winsize.x, 1.0f, 0.0f, 0.0f, "%.0f")) {
-        winsize.y = winsize.x;
-        ImGui::SetWindowSize(Name(), winsize);
+    ImGui::Checkbox("Snap to compass", &snap_to_compass);
+    ImGui::ShowHelp("Resize and position minimap to match in-game compass size and position.");
+
+    is_movable = is_resizable = !snap_to_compass;
+    if (is_resizable) {
+        ImVec2 winsize(100.0f, 100.0f);
+        const ImGuiWindow* window = ImGui::FindWindowByName(Name());
+        if (window) {
+            winsize = window->Size;
+        }
+        if (ImGui::DragFloat("Size", &winsize.x, 1.0f, 0.0f, 0.0f, "%.0f")) {
+            winsize.y = winsize.x;
+            ImGui::SetWindowSize(Name(), winsize);
+        }
     }
 
     ImGui::Text("General");
@@ -400,64 +423,76 @@ void Minimap::DrawSettingInternal()
         Colors::DrawSettingHueWheel("Background", &hero_flag_window_background);
         ImGui::TreePop();
     }
-    ImGui::Checkbox("Show boss by profession color on minimap", &agent_renderer.boss_colors);
-    ImGui::Checkbox("Show hidden NPCs", &agent_renderer.show_hidden_npcs);
+    ImGui::StartSpacedElements(300.f);
+    ImGui::NextSpacedElement();  ImGui::Checkbox("Show boss by profession color on minimap", &agent_renderer.boss_colors);
+    ImGui::NextSpacedElement();  ImGui::Checkbox("Show hidden NPCs", &agent_renderer.show_hidden_npcs);
     ImGui::ShowHelp("Show NPCs that aren't usually visible on the minimap\ne.g. minipets, invisible NPCs");
-    ImGui::Checkbox("Allow mouse click-through", &mouse_clickthrough);
-    ImGui::ShowHelp("Toolbox minimap will not capture mouse events");
-    if (mouse_clickthrough) {
-        ImGui::PushItemFlag(ImGuiItemFlags_Disabled, true);
-        ImGui::PushStyleVar(ImGuiStyleVar_Alpha, ImGui::GetStyle().Alpha * 0.5f);
-    }
-    ImGui::Checkbox("Allow mouse click-through in outposts", &mouse_clickthrough_in_outpost);
-    ImGui::ShowHelp("Toolbox minimap will not capture mouse events when in an outpost");
+
+    ImGui::SliderInt("Agent Border thickness", reinterpret_cast<int*>(&agent_renderer.agent_border_thickness), 0, 50);
+
+    ImGui::Text("Allow mouse click-through in:");
+    ImGui::Indent();
+    ImGui::StartSpacedElements(200.f);
+    ImGui::NextSpacedElement(); ImGui::Checkbox("Explorable areas", &mouse_clickthrough_in_explorable);
+    ImGui::NextSpacedElement(); ImGui::Checkbox("Outposts", &mouse_clickthrough_in_outpost);
+
+    ImGui::Unindent();
     ImGui::Text("Hold + Click modifiers");
     ImGui::ShowHelp("Define behaviour of holding keyboard keys and clicking the minimap.\n"
                     "Draw: ping and draw on the compass.\n"
                     "Target: click to target agent.\n"
                     "Move: move the minimap outside of compass range.\n"
                     "Walk: start walking character to selected location.\n");
-    ImGui::Combo("None", reinterpret_cast<int *>(&key_none_behavior), minimap_modifier_behavior_combo_str);
-    ImGui::Combo("Control", reinterpret_cast<int *>(&key_ctrl_behavior), minimap_modifier_behavior_combo_str);
-    ImGui::Combo("Shift", reinterpret_cast<int *>(&key_shift_behavior), minimap_modifier_behavior_combo_str);
-    ImGui::Combo("Alt", reinterpret_cast<int *>(&key_alt_behavior), minimap_modifier_behavior_combo_str);
-    if (mouse_clickthrough) {
-        ImGui::PopItemFlag();
-        ImGui::PopStyleVar();
-    }
-    ImGui::Checkbox("Reduce agent ping spam", &pingslines_renderer.reduce_ping_spam);
+    ImGui::Combo("None", reinterpret_cast<int*>(&key_none_behavior), minimap_modifier_behavior_combo_str);
+    ImGui::Combo("Control", reinterpret_cast<int*>(&key_ctrl_behavior), minimap_modifier_behavior_combo_str);
+    ImGui::Combo("Shift", reinterpret_cast<int*>(&key_shift_behavior), minimap_modifier_behavior_combo_str);
+    ImGui::Combo("Alt", reinterpret_cast<int*>(&key_alt_behavior), minimap_modifier_behavior_combo_str);
+
+    ImGui::StartSpacedElements(256.f);
+    ImGui::NextSpacedElement(); ImGui::Checkbox("Reduce agent ping spam", &pingslines_renderer.reduce_ping_spam);
     ImGui::ShowHelp("Additional pings on the same agents will increase the duration of the existing ping, rather than create a new one.");
-    ImGui::Checkbox("Map Rotation", &rotate_minimap);
+    ImGui::NextSpacedElement(); ImGui::Checkbox("Map Rotation", &rotate_minimap);
     ImGui::ShowHelp("Map rotation on (e.g. Compass), or off (e.g. Mission Map).");
-    ImGui::Checkbox("Map rotation smoothing", &smooth_rotation);
+    ImGui::NextSpacedElement();
+    ImGui::Checkbox("Flip when reversed", &flip_on_reverse);
+    ImGui::ShowHelp("Whether the minimap rotation should flip 180 degrees when you reverse your camera.");
+    ImGui::NextSpacedElement(); ImGui::Checkbox("Map rotation smoothing", &smooth_rotation);
     ImGui::ShowHelp("Minimap rotation speed matches compass rotation speed.");
-    ImGui::Checkbox("Circular", &circular_map);
-    ImGui::ShowHelp("Whether the map should be circular like the compass or a square (default).");
+    ImGui::NextSpacedElement(); ImGui::Checkbox("Circular", &circular_map);
+    ImGui::ShowHelp("Whether the map should be circular like the compass (default) or a square.");
 }
 
 void Minimap::LoadSettings(CSimpleIni *ini)
 {
     ToolboxWidget::LoadSettings(ini);
-    Resources::Instance().EnsureFileExists(Resources::GetPath(L"Markers.ini"),
-        L"https://raw.githubusercontent.com/HasKha/GWToolboxpp/master/resources/Markers.ini",
-        [](bool success) {
-            UNREFERENCED_PARAMETER(success);
-            Minimap::Instance().custom_renderer.LoadMarkers();
+    Resources::EnsureFileExists(Resources::GetPath(L"Markers.ini"),
+        "https://raw.githubusercontent.com/HasKha/GWToolboxpp/master/resources/Markers.ini",
+        [](bool success, const std::wstring& error) {
+            if (success) {
+                Minimap::Instance().custom_renderer.LoadMarkers();
+            }
+            else {
+                Log::ErrorW(L"Failed to download Markers.ini\n%s", error.c_str());
+            }
+
         });
     scale = static_cast<float>(ini->GetDoubleValue(Name(), VAR_NAME(scale), 1.0));
     hero_flag_controls_show = ini->GetBoolValue(Name(), VAR_NAME(hero_flag_controls_show), true);
     hero_flag_window_attach = ini->GetBoolValue(Name(), VAR_NAME(hero_flag_window_attach), true);
-    hero_flag_window_background = Colors::Load(ini, Name(), "hero_flag_controls_background", ImColor(ImGui::GetStyle().Colors[ImGuiCol_WindowBg]));
-    mouse_clickthrough = ini->GetBoolValue(Name(), VAR_NAME(mouse_clickthrough), false);
+    hero_flag_window_background = Colors::Load(ini, Name(), "hero_flag_controls_background", hero_flag_window_background);
     mouse_clickthrough_in_outpost = ini->GetBoolValue(Name(), VAR_NAME(mouse_clickthrough_in_outpost), mouse_clickthrough_in_outpost);
+    mouse_clickthrough_in_explorable = ini->GetBoolValue(Name(), VAR_NAME(mouse_clickthrough_in_explorable), mouse_clickthrough_in_explorable);
     rotate_minimap = ini->GetBoolValue(Name(), VAR_NAME(rotate_minimap), rotate_minimap);
+    flip_on_reverse = ini->GetBoolValue(Name(), VAR_NAME(flip_on_reverse), flip_on_reverse);
     smooth_rotation = ini->GetBoolValue(Name(), VAR_NAME(smooth_rotation), smooth_rotation);
     circular_map = ini->GetBoolValue(Name(), VAR_NAME(circular_map), circular_map);
+    snap_to_compass = ini->GetBoolValue(Name(), VAR_NAME(snap_to_compass), snap_to_compass);
+
     key_none_behavior = static_cast<MinimapModifierBehaviour>(ini->GetLongValue(Name(), VAR_NAME(key_none_behavior), 1));
     key_ctrl_behavior = static_cast<MinimapModifierBehaviour>(ini->GetLongValue(Name(), VAR_NAME(key_ctrl_behavior), 2));
     key_shift_behavior = static_cast<MinimapModifierBehaviour>(ini->GetLongValue(Name(), VAR_NAME(key_shift_behavior), 3));
     key_alt_behavior = static_cast<MinimapModifierBehaviour>(ini->GetLongValue(Name(), VAR_NAME(key_alt_behavior), 4));
-    pingslines_renderer.reduce_ping_spam = ini->GetBoolValue(Name(), VAR_NAME(reduce_ping_spam), false);
+
     range_renderer.LoadSettings(ini, Name());
     pmap_renderer.LoadSettings(ini, Name());
     agent_renderer.LoadSettings(ini, Name());
@@ -474,16 +509,19 @@ void Minimap::SaveSettings(CSimpleIni *ini)
     ini->SetBoolValue(Name(), VAR_NAME(hero_flag_controls_show), hero_flag_controls_show);
     ini->SetBoolValue(Name(), VAR_NAME(hero_flag_window_attach), hero_flag_window_attach);
     Colors::Save(ini, Name(), VAR_NAME(hero_flag_window_background), hero_flag_window_background);
-    ini->SetBoolValue(Name(), VAR_NAME(mouse_clickthrough), mouse_clickthrough);
     ini->SetBoolValue(Name(), VAR_NAME(mouse_clickthrough_in_outpost), mouse_clickthrough_in_outpost);
+    ini->SetBoolValue(Name(), VAR_NAME(mouse_clickthrough_in_explorable), mouse_clickthrough_in_explorable);
     ini->SetLongValue(Name(), VAR_NAME(key_none_behavior), static_cast<long>(key_none_behavior));
     ini->SetLongValue(Name(), VAR_NAME(key_ctrl_behavior), static_cast<long>(key_ctrl_behavior));
     ini->SetLongValue(Name(), VAR_NAME(key_shift_behavior), static_cast<long>(key_shift_behavior));
     ini->SetLongValue(Name(), VAR_NAME(key_alt_behavior), static_cast<long>(key_alt_behavior));
-    ini->SetBoolValue(Name(), VAR_NAME(reduce_ping_spam), pingslines_renderer.reduce_ping_spam);
+
     ini->SetBoolValue(Name(), VAR_NAME(rotate_minimap), rotate_minimap);
+    ini->SetBoolValue(Name(), VAR_NAME(flip_on_reverse), flip_on_reverse);
     ini->SetBoolValue(Name(), VAR_NAME(smooth_rotation), smooth_rotation);
     ini->SetBoolValue(Name(), VAR_NAME(circular_map), circular_map);
+    ini->SetBoolValue(Name(), VAR_NAME(snap_to_compass), snap_to_compass);
+
     range_renderer.SaveSettings(ini, Name());
     pmap_renderer.SaveSettings(ini, Name());
     agent_renderer.SaveSettings(ini, Name());
@@ -502,7 +540,7 @@ size_t Minimap::GetPlayerHeroes(const GW::PartyInfo *party, std::vector<GW::Agen
     if (!player_id)
         return 0;
     const GW::HeroPartyMemberArray& heroes = party->heroes;
-    
+
     bool player_is_leader = GetPlayerIsLeader();
     std::map<uint32_t, const GW::PlayerPartyMember*> party_players_by_id;
     if (player_is_leader) {
@@ -510,7 +548,7 @@ size_t Minimap::GetPlayerHeroes(const GW::PartyInfo *party, std::vector<GW::Agen
             party_players_by_id.emplace(pplayer.login_number, &pplayer);
         }
     }
-    
+
     _player_heroes.reserve(heroes.size());
     for (const GW::HeroPartyMember &hero : heroes) {
         if (hero.owner_player_id == player_id)
@@ -536,13 +574,13 @@ float Minimap::GetMapRotation() const
     if (rotate_minimap) {
         yaw = smooth_rotation ? GW::CameraMgr::GetCamera()->GetCurrentYaw() : GW::CameraMgr::GetYaw();
     }
-    if (reverse_camera) {
+    if (camera_currently_reversed && flip_on_reverse) {
         yaw = M_PI_F + yaw;
     }
     return yaw;
 }
 
-D3DXVECTOR2 Minimap::GetGwinchScale() const
+DirectX::XMFLOAT2 Minimap::GetGwinchScale() const
 {
     return gwinch_scale;
 }
@@ -558,14 +596,15 @@ void Minimap::Draw(IDirect3DDevice9 *)
 
     // Check shadowstep location
     if (shadowstep_location.x != 0.0f || shadowstep_location.y != 0.0f) {
-        GW::EffectArray effects = GW::Effects::GetPlayerEffectArray();
-        if (!effects.valid()) {
+        GW::EffectArray* effects = GW::Effects::GetPlayerEffects();
+        if (!effects) {
             shadowstep_location = GW::Vec2f();
         }
         else {
             bool found = false;
-            for (unsigned int i = 0; !found && i < effects.size(); ++i) {
-                found = effects[i].skill_id == (DWORD)GW::Constants::SkillID::Shadow_of_Haste || effects[i].skill_id == (DWORD)GW::Constants::SkillID::Shadow_Walk;
+            for (auto& effect : *effects) {
+                found = effect.skill_id == GW::Constants::SkillID::Shadow_of_Haste || effect.skill_id == GW::Constants::SkillID::Shadow_Walk;
+                if (found) break;
             }
             if (!found) {
                 shadowstep_location = GW::Vec2f();
@@ -589,19 +628,34 @@ void Minimap::Draw(IDirect3DDevice9 *)
     ImGui::SetNextWindowSize(ImVec2(500.0f, 500.0f), ImGuiCond_FirstUseEver);
     if (ImGui::Begin(Name(), nullptr, GetWinFlags(ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoBringToFrontOnFocus))) {
         // window pos are already rounded by imgui, so casting is no big deal
-        location.x = static_cast<int>(ImGui::GetWindowPos().x);
-        location.y = static_cast<int>(ImGui::GetWindowPos().y);
-        size.x = static_cast<int>(ImGui::GetWindowSize().x);
-        size.y = static_cast<int>(ImGui::GetWindowSize().y);
-        //auto& style = ImGui::GetStyle();
-        clipping.left = location.x;
-        clipping.right = location.x + size.x;
-        clipping.top = location.y;
-        clipping.bottom = location.y + size.y;
-        // @Broken: Updating ImGui from 1.77 to 1.78 broke AddCallback for Minimap - didn't draw at all for me. - Jon
-        // Instead, record the clipping location of the window and have GWToolbox.cpp call Minimap::Render before ImGui is loaded.
+        if (!snap_to_compass) {
+            location.x = static_cast<int>(ImGui::GetWindowPos().x);
+            location.y = static_cast<int>(ImGui::GetWindowPos().y);
+            size.x = static_cast<int>(ImGui::GetWindowSize().x);
+            size.y = static_cast<int>(ImGui::GetWindowSize().y);
+        }
+        else {
+            // @Cleanup: Don't do this every frame, only when compass is relocated.
+            if (!compass_frame) {
+                compass_frame = GW::UI::GetWindowPosition(GW::UI::WindowID::WindowID_Compass);
+            }
+            else {
+                const float multiplier = GuiUtils::GetGWScaleMultiplier();
+                const float compass_width = compass_frame->width(multiplier);
+                const float compass_padding = compass_width * .05f;
+                location = { (int)(compass_frame->left(multiplier) + compass_padding),(int)(compass_frame->top(multiplier) + compass_padding) };
+                size = { (int)(compass_width - (compass_padding * 2.f)) , (int)(compass_frame->height(multiplier) - (compass_padding * 2.f)) };
+                ImGui::SetWindowPos({ (float)location.x,(float)location.y });
+                ImGui::SetWindowSize({ (float)size.x,(float)size.y });
+            }
+        }
 
-        //ImGui::GetWindowDrawList()->AddCallback(render_callback, static_cast<void *>(device));
+        clipping = {
+            static_cast<LONG>(ImGui::GetWindowPos().x),
+            static_cast<LONG>(ImGui::GetWindowPos().y),
+            static_cast<LONG>(std::ceil(ImGui::GetWindowPos().x + ImGui::GetWindowSize().x)),
+            static_cast<LONG>(std::ceil(ImGui::GetWindowPos().y + ImGui::GetWindowSize().y)),
+        };
     }
     ImGui::End();
     ImGui::PopStyleColor();
@@ -622,7 +676,8 @@ void Minimap::Draw(IDirect3DDevice9 *)
                 static const char *flag_txt[] = {"All", "1", "2", "3", "4", "5", "6", "7", "8"};
                 GW::Vec3f allflag = GW::GameContext::instance()->world->all_flag;
                 const unsigned int num_heroflags = player_heroes.size() + 1;
-                const float w_but = (ImGui::GetWindowContentRegionWidth() - ImGui::GetStyle().ItemSpacing.x * (num_heroflags)) / (num_heroflags + 1);
+                const float w_but = (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x * num_heroflags) /
+                    (num_heroflags + 1);
 
                 for (unsigned int i = 0; i < num_heroflags; ++i) {
                     if (i > 0)
@@ -709,33 +764,39 @@ void Minimap::Render(IDirect3DDevice9* device) {
     device->SetSamplerState(0, D3DSAMP_MINFILTER, D3DTEXF_LINEAR);
     device->SetSamplerState(0, D3DSAMP_MAGFILTER, D3DTEXF_LINEAR);
 
-    auto FillRect = [&device](const Color color, const float x, const float y, const float w, const float h) {
-        D3DVertex vertices[6] = {{x,y, 0.0f, color},
+    const auto FillRect = [&device](const Color color, const float x, const float y, const float w, const float h) {
+        const D3DVertex vertices[6] = {
+            {x, y, 0.0f, color},
             {x + w, y, 0.0f, color},
             {x, y + h, 0.0f, color},
-            {x + w, y + h, 0.0f, color}};
+            {x + w, y + h, 0.0f, color}
+        };
         device->DrawPrimitiveUP(D3DPT_TRIANGLESTRIP, 2, vertices, sizeof(D3DVertex));
     };
 
-    auto FillCircle = [&device](
-                          const float x, const float y, const float radius, const Color clr, float resolution = 199.f) {
-        resolution = std::min(resolution, 199.f);
-        D3DVertex vertices[200];
-        for (auto i = 0; i <= resolution; ++i) {
-            vertices[i] = {radius * cos(D3DX_PI * (i / (resolution / 2.f))) + x,
-                y + radius * sin(D3DX_PI * (i / (resolution / 2.f))), 0.0f, clr};
-        }
-        device->DrawPrimitiveUP(
-            D3DPT_TRIANGLEFAN, static_cast<unsigned int>(ceil(resolution)), vertices, sizeof(D3DVertex));
+    // we MUST draw this for the stencil test, even if alpha is 0
+    const auto FillCircle = [&device](
+        const float x, const float y, const float radius, const Color clr, const int resolution = 192) {
+        const auto res = std::min(resolution, 192);
+            D3DVertex vertices[193];
+            for (auto i = 0; i <= res; i++) {
+                const auto angle = i / static_cast<float>(res) * DirectX::XM_2PI;
+                vertices[i] = {
+                    x + radius * cos(angle),
+                    y + radius * sin(angle),
+                    0.0f,
+                    clr
+                };
+            }
+            device->DrawPrimitiveUP(D3DPT_TRIANGLEFAN, res, vertices, sizeof(D3DVertex));
     };
-    
-    Instance().RenderSetupProjection(device);
 
-    
-    D3DCOLOR background = Instance().pmap_renderer.GetBackgroundColor();
+    instance.RenderSetupProjection(device);
+
+    const D3DCOLOR background = instance.pmap_renderer.GetBackgroundColor();
     device->SetScissorRect(&instance.clipping); // always clip to rect as a fallback if the stenciling fails
     device->SetRenderState(D3DRS_SCISSORTESTENABLE, true);
-    if (Instance().circular_map) {
+    if (instance.circular_map) {
         device->SetRenderState(D3DRS_STENCILENABLE, true); // enable stencil testing
         device->SetRenderState(D3DRS_STENCILMASK, 0xffffffff);
         device->SetRenderState(D3DRS_STENCILWRITEMASK, 0xffffffff);
@@ -746,62 +807,60 @@ void Minimap::Render(IDirect3DDevice9* device) {
         device->SetRenderState(D3DRS_STENCILREF, 1);
         device->SetRenderState(D3DRS_STENCILFUNC, D3DCMP_ALWAYS);
         device->SetRenderState(D3DRS_STENCILPASS, D3DSTENCILOP_REPLACE); // write ref value into stencil buffer
-        FillCircle(0, 0, 5000.0f, background); // draw circle with chosen background color into stencil buffer, fills buffer with 1's
+        FillCircle(0, 0, 5000.f, background); // draw circle with chosen background color into stencil buffer, fills buffer with 1's
         device->SetRenderState(D3DRS_STENCILFUNC, D3DCMP_EQUAL); // only draw where 1 is in the buffer
         device->SetRenderState(D3DRS_STENCILFAIL, D3DSTENCILOP_ZERO);
         device->SetRenderState(D3DRS_STENCILPASS, D3DSTENCILOP_REPLACE);
-    } else {
+    }
+    else {
         FillRect(background, -5000.0f, -5000.0f, 10000.f, 10000.f); // fill rect with chosen background color
     }
 
-    D3DXMATRIX translate_char;
-    D3DXMatrixTranslation(&translate_char, -me->pos.x, -me->pos.y, 0);
+    auto translate_char = DirectX::XMMatrixTranslation(-me->pos.x, -me->pos.y, 0);
 
-    D3DXMATRIX rotate_char;
-    D3DXMatrixRotationZ(&rotate_char, -Instance().GetMapRotation() + static_cast<float>(M_PI_2));
+    const auto rotate_char = DirectX::XMMatrixRotationZ(-instance.GetMapRotation() + static_cast<float>(M_PI_2));
 
-    D3DXMATRIX scaleM, translationM;
-    D3DXMatrixScaling(&scaleM, Instance().scale, Instance().scale, 1.0f);
-    D3DXMatrixTranslation(&translationM, Instance().translation.x, Instance().translation.y, 0);
+    const auto scaleM = DirectX::XMMatrixScaling(instance.scale, instance.scale, 1.0f);
+    const auto translationM = DirectX::XMMatrixTranslation(instance.translation.x, instance.translation.y, 0);
 
-    float gwinch_scale = static_cast<float>(Instance().size.x) / 5000.0f / 2.f * Instance().scale;
-    if (gwinch_scale != Instance().gwinch_scale.x) {
-        Instance().range_renderer.Invalidate();
-        Instance().gwinch_scale = {gwinch_scale, gwinch_scale};
+    float current_gwinch_scale = static_cast<float>(instance.size.x) / 5000.0f / 2.f * instance.scale;
+    if (current_gwinch_scale != gwinch_scale.x) {
+        instance.range_renderer.Invalidate();
+        gwinch_scale = { current_gwinch_scale, current_gwinch_scale };
     }
 
-    D3DXMATRIX view = translate_char * rotate_char * scaleM * translationM;
-    device->SetTransform(D3DTS_VIEW, &view);
+    const auto view = translate_char * rotate_char * scaleM * translationM;
+    device->SetTransform(D3DTS_VIEW, reinterpret_cast<const D3DMATRIX*>(&view));
 
-    Instance().pmap_renderer.Render(device);
+    instance.pmap_renderer.Render(device);
 
-    Instance().custom_renderer.Render(device);
+    instance.custom_renderer.Render(device);
 
     // move the rings to the char position
-    D3DXMatrixTranslation(&translate_char, me->pos.x, me->pos.y, 0);
-    device->SetTransform(D3DTS_WORLD, &translate_char);
-    Instance().range_renderer.Render(device);
+    translate_char = DirectX::XMMatrixTranslation(me->pos.x, me->pos.y, 0);
+    device->SetTransform(D3DTS_WORLD, reinterpret_cast<const D3DMATRIX*>(&translate_char));
+    instance.range_renderer.Render(device);
     device->SetTransform(D3DTS_WORLD, &reset_world);
 
-    if (Instance().translation.x != 0 || Instance().translation.y != 0) {
-        D3DXMATRIX view2 = scaleM;
-        device->SetTransform(D3DTS_VIEW, &view2);
-        Instance().range_renderer.SetDrawCenter(true);
-        Instance().range_renderer.Render(device);
-        Instance().range_renderer.SetDrawCenter(false);
-        device->SetTransform(D3DTS_VIEW, &view);
+    if (instance.translation.x != 0 || instance.translation.y != 0) {
+        const auto view2 = scaleM;
+        device->SetTransform(D3DTS_VIEW, reinterpret_cast<const D3DMATRIX*>(&view2));
+        instance.range_renderer.SetDrawCenter(true);
+        instance.range_renderer.Render(device);
+        instance.range_renderer.SetDrawCenter(false);
+        device->SetTransform(D3DTS_VIEW, reinterpret_cast<const D3DMATRIX*>(&view));
     }
 
-    Instance().symbols_renderer.Render(device);
+    instance.symbols_renderer.Render(device);
 
     device->SetTransform(D3DTS_WORLD, &reset_world);
-    Instance().agent_renderer.Render(device);
+    instance.agent_renderer.Render(device);
 
-    Instance().effect_renderer.Render(device);
+    instance.effect_renderer.Render(device);
 
-    Instance().pingslines_renderer.Render(device);
+    instance.pingslines_renderer.Render(device);
 
-    if (Instance().circular_map) {
+    if (instance.circular_map) {
         device->SetRenderState(D3DRS_STENCILREF, 0);
         device->SetRenderState(D3DRS_STENCILWRITEMASK, 0x00000000);
         device->SetRenderState(D3DRS_STENCILFUNC, D3DCMP_NEVER);
@@ -876,48 +935,49 @@ GW::Vec2f Minimap::InterfaceToWorldVector(Vec2i pos) const
     return v;
 }
 
-void Minimap::SelectTarget(GW::Vec2f pos) const
+void Minimap::SelectTarget(const GW::Vec2f pos) const
 {
-    GW::AgentArray agents = GW::Agents::GetAgentArray();
-    if (!agents.valid())
-        return;
+    const auto* agents = GW::Agents::GetAgentArray();
+    if (agents == nullptr) return;
+    auto distance = 600.0f * 600.0f;
+    const GW::Agent* closest = nullptr;
 
-    float distance = 600.0f * 600.0f;
-    size_t closest = static_cast<size_t>(-1);
-
-    for (size_t i = 0; i < agents.size(); ++i) {
-        GW::Agent *agent = agents[i];
+    for (const auto* agent : *agents) {
         if (agent == nullptr)
             continue;
-        GW::AgentLiving *living = agent->GetAsAgentLiving();
+        const auto* living = agent->GetAsAgentLiving();
         if (living && living->GetIsDead())
             continue;
         if (agent->GetIsItemType())
             continue;
-        if (agent->GetIsGadgetType() && agent->GetAsAgentGadget()->gadget_id != 8141)
-            continue; // allow locked chests
-        if (living && (living->player_number >= 230 && living->player_number <= 346))
-            continue; // block all useless minis
-        const float newDistance = GW::GetSquareDistance(pos, agents[i]->pos);
+        const float newDistance = GW::GetSquareDistance(pos, agent->pos);
         if (distance > newDistance) {
             distance = newDistance;
-            closest = i;
+            closest = agent;
         }
     }
 
-    if (closest != static_cast<size_t>(-1)) {
-        GW::Agents::ChangeTarget(agents[closest]);
+    if (closest != nullptr) {
+        GW::Agents::ChangeTarget(closest);
     }
 }
 
 bool Minimap::WndProc(UINT Message, WPARAM wParam, LPARAM lParam)
 {
+    if (!GetKeyState(VK_LBUTTON) && mousedown) // fix left button being released outside of gw window
+        mousedown = false;
     if (is_observing)
         return false;
-    if (mouse_clickthrough)
-        return Message == WM_LBUTTONDOWN && FlagHeros(lParam);
+    if (mouse_clickthrough_in_explorable && GW::Map::GetInstanceType() == GW::Constants::InstanceType::Explorable) {
+        if (!IsKeyDown(MinimapModifierBehaviour::Target) &&
+            !IsKeyDown(MinimapModifierBehaviour::Walk) &&
+            !IsKeyDown(MinimapModifierBehaviour::Move))
+            return Message == WM_LBUTTONDOWN && FlagHeros(lParam);
+    }
     if (mouse_clickthrough_in_outpost && GW::Map::GetInstanceType() == GW::Constants::InstanceType::Outpost)
-        return false;
+        if (!IsKeyDown(MinimapModifierBehaviour::Target) && !IsKeyDown(MinimapModifierBehaviour::Walk) &&
+            !IsKeyDown(MinimapModifierBehaviour::Move))
+            return false;
     switch (Message) {
         case WM_MOUSEMOVE:
             return OnMouseMove(Message, wParam, lParam);
@@ -1123,7 +1183,21 @@ bool Minimap::IsInside(int x, int y) const
 }
 bool Minimap::IsActive() const
 {
-    return visible && !loading && GW::Map::GetIsMapLoaded() && GW::Map::GetInstanceType() != GW::Constants::InstanceType::Loading && GW::Agents::GetPlayerId() != 0;
+    if (snap_to_compass) {
+        if (!compass_frame) {
+            compass_frame = GW::UI::GetWindowPosition(GW::UI::WindowID::WindowID_Compass);
+        }
+        if (compass_frame && !compass_frame->visible()) {
+            return false;
+        }
+    }
+
+    return visible
+        && !loading
+        && GW::Map::GetIsMapLoaded()
+        && !GW::UI::GetIsWorldMapShowing()
+        && GW::Map::GetInstanceType() != GW::Constants::InstanceType::Loading
+        && GW::Agents::GetPlayerId() != 0;
 }
 
 void Minimap::RenderSetupProjection(IDirect3DDevice9 *device) const
@@ -1133,7 +1207,7 @@ void Minimap::RenderSetupProjection(IDirect3DDevice9 *device) const
 
     const float w = 5000.0f * 2;
     // IMPORTANT: we are setting z-near to 0.0f and z-far to 1.0f
-    const D3DXMATRIX ortho_matrix(2 / w, 0, 0, 0, 0, 2 / w, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1);
+    const DirectX::XMMATRIX ortho_matrix(2 / w, 0, 0, 0, 0, 2 / w, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1);
 
     //// note: manually craft the projection to viewport instead of using
     //// SetViewport to allow target regions outside the viewport
@@ -1143,18 +1217,18 @@ void Minimap::RenderSetupProjection(IDirect3DDevice9 *device) const
     const float xtrans = static_cast<float>(location.x * 2 + size.x) / viewport.Width - 1.0f;
     const float ytrans = -static_cast<float>(location.y * 2 + size.x) / viewport.Height + 1.0f;
     ////IMPORTANT: we are basically setting z-near to 0 and z-far to 1
-    const D3DXMATRIX viewport_matrix(xscale, 0, 0, 0, 0, yscale, 0, 0, 0, 0, 1, 0, xtrans, ytrans, 0, 1);
+    const DirectX::XMMATRIX viewport_matrix(xscale, 0, 0, 0, 0, yscale, 0, 0, 0, 0, 1, 0, xtrans, ytrans, 0, 1);
 
-    D3DXMATRIX proj = ortho_matrix * viewport_matrix;
+    const auto proj = ortho_matrix * viewport_matrix;
 
-    device->SetTransform(D3DTS_PROJECTION, &proj);
+    device->SetTransform(D3DTS_PROJECTION, reinterpret_cast<const D3DMATRIX*>(&proj));
 }
 
 bool Minimap::IsKeyDown(const MinimapModifierBehaviour mmb) const
 {
-    return (key_none_behavior == mmb && !ImGui::IsKeyDown(VK_CONTROL) && !ImGui::IsKeyDown(VK_SHIFT) &&
-               !ImGui::IsKeyDown(VK_MENU)) ||
-           (key_ctrl_behavior == mmb && ImGui::IsKeyDown(VK_CONTROL)) ||
-           (key_shift_behavior == mmb && ImGui::IsKeyDown(VK_SHIFT)) ||
-           (key_alt_behavior == mmb && ImGui::IsKeyDown(VK_MENU));
+    return (key_none_behavior == mmb && !ImGui::IsKeyDown(ImGuiKey_ModCtrl) &&
+        !ImGui::IsKeyDown(ImGuiKey_ModShift) &&!ImGui::IsKeyDown(ImGuiKey_ModAlt)) ||
+           (key_ctrl_behavior == mmb && ImGui::IsKeyDown(ImGuiKey_ModCtrl)) ||
+           (key_shift_behavior == mmb && ImGui::IsKeyDown(ImGuiKey_ModShift)) ||
+           (key_alt_behavior == mmb && ImGui::IsKeyDown(ImGuiKey_ModAlt));
 }

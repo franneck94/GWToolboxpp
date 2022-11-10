@@ -7,6 +7,258 @@ Previous releases are provided as dll files. If you are looking for the latest v
 
 In order to use these older DLL versions, you need to put `GWToolboxdll.dll` in the same folder as `GWToolbox.exe`, run the exe with the `/localdll` parameter, and disable automatic updates from within GWToolbox.
 
+## Version 6.0
+* [New] GWToolbox no longer requires installation, you can immediately execute the exe or inject the dll manually
+* [New] `/target ally` and `/target enemy` added
+* [New] Added option to hide merchant items (selling only) in Inventory Settings module
+* [New] Added option to disable item descriptions on hover (hold ALT to reveal them)
+* [New] Added option to hide/show ally skills in the Skill Monitor Widget
+* [New] Added option to only show effects lasting less than N seconds in Effect Monitor Widget
+* [New] Added option to snap minimap to in-game compass position
+* [New] Added option to hide e-mail on login screen
+* [New] Added custom block rules for the Item Filter
+* [New] Added option to hide items from the sell window at merchants
+* [New] Hall of Monuments integrated into Completion Window
+* [Minor] Obfuscate player name in Hall of Monuments
+* [Minor] Obfuscate account name in Hero > Account window
+* [Minor] Obfuscate player name in cinematics
+* [Minor] Hovered item in Info Window stays available after mouse is moved away from item
+* [Minor] Added option to hold shift when toggling pcons to turn pcons off/on by group
+* [Minor] Minimap circles are more circle-shaped now
+* [Minor] Dialog module Take and Reward combined into one button
+* [Minor] Disable ImGui keyboard navigation
+* [Minor] Added grog messages to alcohol speech bubble filter list
+* [Minor] Can change Minimap modifiers now when both clickthrough options are selected
+* [Fix] Fixed bugs with wrong Effect Monitor offset when loading toolbox with minions
+* [Fix] Fixed crash dialog sometimes showing when GW is closed whilst toolbox is running
+* [Fix] Fixed bugs causing wrong or missing skills to be loaded when trying to load a skill bar with toolbox running
+* [Fix] Fixed some non-salvagable items being shown as salvagable when using Salvage All function
+* [Fix] Fixed re-invite not working on current player
+* [Fix] Fixed rare loading screen freeze
+* [Fix] Fixed Skillbar and Minimap potentially being off by 1 pixel when pinned to ingame window
+* [Fix] Reapply title defaults to Lightbringer again
+* [Fix] Fixed camera sometimes jumping/glitching when looking around with RMB pressed
+
+[Download](https://github.com/HasKha/GWToolboxpp/releases/download/6.0_Release/GWToolboxdll.dll)
+
+## Version 5.16
+* [New] Added option in game settings to suppress overhead info for experience/faction gained
+* [Minor] `/dialog take` now also takes quest rewards
+* [Fix] Fixed bug preventing access to skill purchases or trader navigation
+* [Fix] Fixed bug preventing drawing or pings on the toolbox minimap being sent to the server
+* [Fix] Fixed bug causing gwtoolbox to auto update regardless of user preference
+* [Fix] Fixed bug stopping shadow walk marker from being shown on minimap
+* [Fix] Fixed ownership logic in ItemFilter module
+* [Fix] Fixed bug causing rerolling to log out completely rather than to char select screen
+
+[Download](https://github.com/HasKha/GWToolboxpp/releases/download/5.16_Release/GWToolboxdll.dll)
+
+## Version 5.15
+* [New] Item and skills images now load on demand from Guild Wars Wiki instead of being compiled inside toolbox
+* [New] Added Preferred Skill Ordes window via settings > builds
+* [New] Added option to override default nametag colour for in-game agents via game settings
+* [New] Added option to manage summoning stones in the pcons window via pcons settings
+* [New] Show prompt to switch secondary profession when trying to use a tome for a different profession
+* [New] Option to override default title used when `/title` doesn't apply to the current map
+* [New] Exposed a `Terminate` function for other third party dll's to close toolbox
+* [New] `/volume` chat command
+* [New] Enabled/fixed the use of third party dll plugins
+* [New] Auto reject invitations and chat messages from ignored players
+* [New] Option to only trigger hotkey in range of NPC
+* [New] Added SkillMonitor widget to see what allies are casting
+* [New] Added ItemFilter module
+* [New] Added `/hom` chat command, added info to info window
+* [Minor] Added dialog hotkey option to auto accept first available quest
+* [Minor] Added option to remove imperial guard summons
+* [Minor] Added option whether to change back to previous character on a failed reroll
+* [Minor] Added option to auto use lockpick
+* [Minor] Removed ability to target hidden agents
+* [Minor] Removed ability to use dialogs that aren't given by the server
+* [Minor] Preventing `/chest` command form opening locked chests from afar
+* [Minor] Black borders on agents in minimap
+* [Minor] Custom agent circle colors
+* [Minor] Map info on discord is always in English
+* [Minor] Ensure wiki link searches for English item name when accessing via context menu
+* [Minor] Save preference to hide completed areas in the completion window module
+* [Minor] GWToolboxpp folder moved to `%USERPROFILE%/Documents/<Computername>
+* [Minor] Various fixes to GWToolbox launcher
+* [Minor] Added GW Hotkey commands for hero 9 to 12
+* [Minor] Added GW Hotkey commands for per/hero commander
+* [Minor] Added more maps for default `/title` option
+* [Minor] Added target title tier info
+* [Minor] Option to toggle reverse minimap when reverse camera is pressed
+* [Fix] Fixed bug on effect monitor being messed up when moving between 2 spirits of the same type
+* [Fix] Fixed chat filter option for "player x is away" from being saved to file
+* [Fix] Fixed some objective timer bugs
+* [Fix] Fixed Discord blocking main thread then updating server
+* [Fix] Removed option to toggle gw hotkeys on map change due to the game not being ready to receive the command
+* [Fix] Fixed UI checkboxes for position and size lock on main window
+* [Fix] Fixed various crashes/bugs in party statistics window module
+* [Fix] Fixed not being able to use mouse where the toolbox minimap is located on screen when in world map view
+* [Fix] Fixed discord dll not being unloaded when closing toolbox
+
+...and loads of other stuff I've forgotten to write down
+
+[Download](https://github.com/HasKha/GWToolboxpp/releases/download/5.15_Release/GWToolboxdll.dll)
+
+## Version 5.14
+* [New] Added Party Statistics Module
+* [New] Added GW Key Hotkeys to be able to bind modifier keys to in-game controls
+* [Fix] Fixed bug with some messages in the hints module
+* [Fix] Fixed issue preventing toolbox from guessing material storage stack size
+* [Fix] Fixed some player names not showing in the reroll window
+* [Fix] Vanquish count overlay moved to correct place
+* [Fix] UI tweaks to friend list window
+* [Minor] More districts recognised when using `/tp` command e.g. int1, ae4
+* [Minor] Reroll function now kicks all heroes before re-inviting to former party
+* [Minor] Added option to limit signets of capture on skills window to 10
+
+[Download](https://github.com/HasKha/GWToolboxpp/releases/download/5.14_Release/GWToolboxdll.dll)
+
+## Version 5.13
+* [Fix] Fixed chat related crash when using obfuscator
+* [Fix] Fixed `/reroll` command not working unless reroll window is visible
+* [Minor] Automatically ignore trade requests and party invites from ignored players
+
+[Download](https://github.com/HasKha/GWToolboxpp/releases/download/5.13_Release/GWToolboxdll.dll)
+
+## Version 5.12
+* [Fix] Fixed crash when using `/t` command without any other args
+* [Fix] Fixed occasional crash talking to NPCs
+* [Fix] Fixed crash when loading chat log without a valid timestamp
+* [New] Added `/reroll` and `/rr` commands
+* [New] Added Reroll Window module
+* [New] Added option to hide unsellable items when talking to a merchant
+* [Minor] Chat logs now save on map change
+* [Minor] Greyed out mission names for maps that aren't unlocked yet in completion window
+* [Minor] Revisited clickthough settings in minimap widget
+* [Minor] Crash dialogs are handled exclusively by gwtoolbox, and contain more debug info
+
+[Download](https://github.com/HasKha/GWToolboxpp/releases/download/5.12_Release/GWToolboxdll.dll)
+
+## Version 5.11
+* [Fix] Fixed crash when completing and objective that hasn't started in objective timer
+* [Fix] Fixed issues connecting to twitch
+
+[Download](https://github.com/HasKha/GWToolboxpp/releases/download/5.11_Release/GWToolboxdll.dll)
+
+## Version 5.10
+* [New] Added option to specify player name for hotkeys
+* [New] Hotkeys are now able to be triggered for more than 1 map id
+* [New] Hotkeys are now able to be triggered for more than 1 profession
+* [Minor] Added list view for completion window
+* [Minor] Added option to hide completed missions and vanquishes on completion window
+* [Minor] Any Guild Wars crash automatically creates a GWToolbox crash dump with all related info.
+* [Minor] Added vc142 to installer msi file
+* [Minor] Split extra timer options in Timer widget out for better control
+* [Fix] Fixed layout issues with checkboxes on smaller window sizes; most checkboxes are now responsive
+* [Fix] Further fixes to objective timer window should address recent issues with instance timer not resetting properly/invalid times
+* [Fix] Fixed occasional crashes related to incoming chat messages
+
+[Download](https://github.com/HasKha/GWToolboxpp/releases/download/5.10_Release/GWToolboxdll.dll)
+
+## Version 5.9
+* [New] Added `/morale` chat command
+* [Minor] Added bulb icon in settings for hints
+* [Minor] Rewrite ctrl+click bahaviour for storing materials
+* [Fix] Fixed bug crashing on map change related to chat log
+* [Fix] Fixed effect monitor widget drawing in wrong place for players who have their effects in the default position on screen
+* [Fix] Fixed bug causing vanquish icons to not change when selecting character in completion window
+* [Fix] Fixed crash when loading gwtoolbox whilst in an outpost and triggering hotkeys on load
+* [Fix] Fixed bug preventing friend list messages from displaying in the current map that toolbox is loaded in
+* [Fix] Fixed out of memory error after closing toolbox from the char select screen
+
+[Download](https://github.com/HasKha/GWToolboxpp/releases/download/5.9_Release/GWToolboxdll.dll)
+
+## Version 5.8
+* [New] Added option in Party Settings to rename tengu/imperial guard summons to their elise skill
+* [New] Completion overhaul; added hero tracking, hard mode toggle, character selector
+* [New] `/travel` command checks explorable areas if no matching outpost is found, tp's the player to closest unlocked outpost
+* [New] Added Effects Monitor overlay widget
+* [New] Added `/quest` chat command to send current quest details to team chat
+* [New] Added Chat Log module to keep a record of chat history and sent message logs even if logged out
+* [New] Added Hints module to start showing useful hints via the GW hints panel
+* [Minor] Added healthbar, energybar, experiencebar, compass and chat to `/toggle | /hide | /show` command to easily show/hide some GW UI bits 
+* [Fix] Fixed bugs with pcon refilling and warning messages in chat
+* [Fix] Minimap agent damaged modifier saves and loads correctly
+* [Fix] Fixed some bugs related to item moves with ctrl and shift click
+* [Fix] Fixed bug causing "move item to current storage pane" to store materials in material storage first
+* [Fix] Fixed bug preventing mouse interaction on char select
+* [Fix] Fixed bugs with objective timer showing wrong start time for runs
+
+[Download](https://github.com/HasKha/GWToolboxpp/releases/download/5.8_Release/GWToolboxdll.dll)
+
+## Version 5.7
+
+* [Fix] Fixed crashing related to stack overflow issues on string decoding
+* [Fix] Fixed bug causing wrong outpost teleport when clicking some EotN vanquish icons in completion window 
+* [Fix] Fixed bug causing crash for players who had a character without any skills (e.g. expired trial account)
+* [Fix] Fixed bug causing pcons to refill when disabled
+
+[Download](https://github.com/HasKha/GWToolboxpp/releases/download/5.7_Release/GWToolboxdll.dll)
+
+## Version 5.6
+
+* [Minor] Hide pointless quest marker for zaishen scout in all outposts
+* [Minor] Renamed Missions window to Completion window
+* [New] "Enter new stack size" prompt is now shown when ctrl + shift clicking an item in inventory/chest
+* [New] Prophecies/Factions dupe skills are checked and swapped in when loading a skillbar
+* [New] Kurzick/Luxon skills are checked and swapped in when loading a skillbar based on title progress
+* [New] Added PvE skill tracker to Completion window
+* [New] Added Elite skill tracker to Completion window
+* [New] Added extra context menu option to withdraw or store all of the same item
+* [New] Disable hotkeys on pvp characters by default; added a tickbox to re-enable a hotkey when playing a pvp only character
+* [New] Added `/toggle` command as a shortcut to `/hide` or `/show` depending on UI
+* [New] Added `/toggle helm, custome, costume_head, cape`
+* [New] Added `/pcons refill` and `/pcons refill <pcon_name>`
+* [New] Added `/target [name|model_id] [index]` to target nth NPC by name or model_id oin distance order
+* [Fix] Fixed ctrl + shift + h and shoft + print scrn not hiding toolbox UI
+* [Fix] Fixed crashing on character select, map load, and talking to NPCs for some clients
+* [Fix] Fixed bug causing `/target` command to target dead NPCs
+* [Fix] Fixed bug when using `/target` to target signposts
+
+[Download](https://github.com/HasKha/GWToolboxpp/releases/download/5.6_Release/GWToolboxdll.dll)
+
+## Version 5.5
+
+* [Fix] Removed unusable settings for world map widget
+* [Fix] Enabled mission window module for release
+* [Fix] Fixed jittery movement when camera smoothing is disabled
+* [Fix] Fixed bug in toolbox settings related to controls sharing the same ID
+
+[Download](https://github.com/HasKha/GWToolboxpp/releases/download/5.5_Release/GWToolboxdll.dll)
+
+## Version 5.4
+
+* [Minor] Don't credit NPC kills in observer module
+* [Minor] Added option to show distance widget in percentage and/or absolute value
+* [Minor] Added option to show health widget in percentage and/or absolute value
+* [Minor] Added extra check for aftercast when using equip item hotkey
+* [Minor] Added support for french GWW when accessing wiki links
+* [Minor] Added hint to in-game trader window for bulk buy/sell
+* [New] Added `/target player [1-12|nearest|name]` command
+* [New] Added `/target priority [1-12]` command
+* [New] Extended `/target` command to allow partial NPC names instead of model id's e.g. `/target merchant`
+* [New] Added `/target item [model_id|nearest|name]` command
+* [New] Added custom name label color to minimap custom agents
+* [New] `/wiki` command to redirect to `/wiki <current map name>` to make it actually useful
+* [New] `/wiki quest` command to redirect to `/wiki <current quest name>`
+* [New] `/wiki target` command to redirect to `/wiki <current target name>`
+* [New] Extended equip item hotkey to choose specific items to equip instead of just by slot
+* [New] Added "Show All Areas" and "Hard Mode" toggles to world map view
+* [New] Added Missions module to track in-game vanquish/mission/dungeon progress
+* [New] Added option to focus GW when toolbox is launched
+* [New] Added option to copy a teambuild instead of having to recreate it manually
+* [New] Dialog hotkey now opens dialog with the target NPC when triggered
+* [New] Added option to color friend name tags differently when in an outpost
+* [New] Added `/ping [build]` chat command
+* [New] Added option to Ctrl + click a party member's damage in the damage monitor to print to chat
+* [Fix] Fixed bug causing minimap to sometimes show dead enemies as still alive
+* [Fix] Fixed bug causing item context menu wiki link to include item quantity when opening the website
+* [Fix] Fixed some NPC dialogs still mentioning the player name when obfuscator is on
+
+[Download](https://github.com/HasKha/GWToolboxpp/releases/download/5.4_Release/GWToolboxdll.dll)
+
 ## Version 5.3
 
 * [Fix] Fixed some map load crashes when using obfuscator

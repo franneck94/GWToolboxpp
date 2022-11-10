@@ -7,7 +7,9 @@
 
 #include <GWCA/Managers/MapMgr.h>
 
-#include <Defines.h>
+#include <GWCA/Managers/UIMgr.h>
+
+#include <Utils/GuiUtils.h>
 
 // abstract class Toolbox Hotkey
 // has the key code and pressed status
@@ -20,6 +22,9 @@ public:
         Op_Delete,
         Op_BlockInput,
     };
+
+    static const char* professions[];
+    static const char* instance_types[];
 
     static bool show_active_in_header;
     static bool show_run_in_header;
@@ -38,35 +43,46 @@ public:
     bool block_gw = false; // true to consume the keypress before passing to gw.
     bool trigger_on_explorable = false; // Trigger when entering explorable area
     bool trigger_on_outpost = false; // Trigger when entering outpost area
+    bool trigger_on_pvp_character = false; // Trigger when playing a PvP character
+    bool can_trigger_on_map_change = true; // Some hotkeys cant trigger on map change e.g. Guild Wars Key
 
-    int map_id = 0;
-    int prof_id = 0;
+    std::vector<uint32_t> map_ids;
+    bool prof_ids[11];
     int instance_type = -1;
+    char player_name[20] = "";
+    uint32_t in_range_of_npc_id = 0;
+    float in_range_of_distance = 0.f;
 
     long hotkey = 0;
     long modifier = 0;
 
     // Create hotkey, load from file if 'ini' is not null
     TBHotkey(CSimpleIni* ini, const char* section);
-    virtual ~TBHotkey(){};
+    virtual ~TBHotkey() = default;
 
     virtual bool CanUse();
+
+    // Whether this hotkey is limited to professions. Returns number of professions applicable
+    size_t HasProfession();
+    // Whether this hotkey is valid for the current player/map
+    virtual bool IsValid(const char* _player_name, GW::Constants::InstanceType _instance_type, GW::Constants::Profession _profession, GW::Constants::MapID _map_id, bool is_pvp_character);
 
 
     virtual void Save(CSimpleIni* ini, const char* section) const;
 
-    void Draw(Op* op);
+    bool Draw(Op* op);
 
-    virtual const char* Name() const = 0;
-    virtual void Draw() = 0;
-    virtual void Description(char *buf, size_t bufsz) const = 0;
+    [[nodiscard]] virtual const char* Name() const = 0;
+    virtual bool Draw() = 0;
+    virtual int Description(char *buf, size_t bufsz) = 0;
     virtual void Execute() = 0;
     virtual void Toggle() { return Execute(); };
 protected:
-    
+
     static bool isLoading() { return GW::Map::GetInstanceType() == GW::Constants::InstanceType::Loading; }
     static bool isExplorable() { return GW::Map::GetInstanceType() == GW::Constants::InstanceType::Explorable; }
     static bool isOutpost() { return GW::Map::GetInstanceType() == GW::Constants::InstanceType::Outpost; }
+    bool IsInRangeOfNPC();
 
     const unsigned int ui_id = 0;   // an internal id to ensure interface consistency
 
@@ -90,20 +106,50 @@ public:
 
     void Save(CSimpleIni* ini, const char* section) const override;
 
-    void Draw() override;
-    void Description(char *buf, size_t bufsz) const override;
+    bool Draw() override;
+    int Description(char *buf, size_t bufsz) override;
     void Execute() override;
 };
 
+class HotkeyEquipItemAttributes {
+public:
+    HotkeyEquipItemAttributes(uint32_t _model_id = 0, const wchar_t* _name_enc = 0, const wchar_t* _info_string = 0, const GW::ItemModifier* _mod_struct = 0, size_t _mod_struct_size = 0);
+    HotkeyEquipItemAttributes* set(uint32_t _model_id = 0, const wchar_t* _name_enc = 0, const wchar_t* _info_string = 0, const GW::ItemModifier* _mod_struct = 0, size_t _mod_struct_size = 0);
+    HotkeyEquipItemAttributes(const GW::Item* item);
+    bool check(GW::Item* item = nullptr);
+    uint32_t model_id = 0;
+    GuiUtils::EncString enc_name;
+    GuiUtils::EncString enc_desc;
+    size_t mod_struct_size = 0;
+    uint32_t mod_struct[16] = { 0 };
+    std::string& name() { return enc_name.string(); }
+    std::wstring& name_ws() { return enc_name.wstring(); }
+    std::string& desc() { return enc_desc.string(); }
+    std::wstring& desc_ws() { return enc_desc.wstring(); }
+    HotkeyEquipItemAttributes(const HotkeyEquipItemAttributes& temp_obj) {
+        *this = temp_obj;
+    };
+    HotkeyEquipItemAttributes& operator=(const HotkeyEquipItemAttributes& temp_obj) {
+        set(temp_obj.model_id, temp_obj.enc_name.encoded().c_str(), temp_obj.enc_desc.encoded().c_str());
+        memcpy(mod_struct, temp_obj.mod_struct, sizeof(temp_obj.mod_struct));
+        mod_struct_size = temp_obj.mod_struct_size;
+        return *this;
+    };
+};
 class HotkeyEquipItem : public TBHotkey {
 private:
     UINT bag_idx = 0;
     UINT slot_idx = 0;
+    enum EquipBy : int {
+        ITEM,
+        SLOT
+    } equip_by = SLOT;
     GW::Item* item = nullptr;
     std::chrono::time_point<std::chrono::steady_clock> start_time;
     std::chrono::time_point<std::chrono::steady_clock> last_try;
-    wchar_t* item_name = L"";
+    const wchar_t* item_name = L"";
 public:
+    HotkeyEquipItemAttributes item_attributes;
     static const char* IniSection() { return "EquipItem"; }
     const char* Name() const override { return IniSection(); }
 
@@ -111,11 +157,13 @@ public:
 
     void Save(CSimpleIni* ini, const char* section) const override;
 
-    void Draw() override;
-    void Description(char* buf, size_t bufsz) const override;
+    bool Draw() override;
+    int Description(char* buf, size_t bufsz) override;
     void Execute() override;
 
-    bool IsEquippable(GW::Item* item);
+    bool IsEquippable(const GW::Item* item);
+
+    GW::Item* FindMatchingItem(GW::Constants::Bag bag_idx);
 };
 
 // hotkey to use an item
@@ -134,8 +182,8 @@ public:
 
     bool CanUse() override { return TBHotkey::CanUse() && item_id != 0; }
 
-    void Draw() override;
-    void Description(char* buf, size_t bufsz) const override;
+    bool Draw() override;
+    int Description(char* buf, size_t bufsz) override;
     void Execute() override;
 };
 
@@ -161,8 +209,8 @@ public:
 
     void Save(CSimpleIni* ini, const char* section) const override;
 
-    void Draw() override;
-    void Description(char *buf, size_t bufsz) const override;
+    bool Draw() override;
+    int Description(char *buf, size_t bufsz) override;
     void Execute() override;
 };
 
@@ -187,8 +235,8 @@ public:
     ~HotkeyToggle();
     void Save(CSimpleIni* ini, const char* section) const override;
 
-    void Draw() override;
-    void Description(char *buf, size_t bufsz) const override;
+    bool Draw() override;
+    int Description(char *buf, size_t bufsz) override;
     void Execute() override;
     void Toggle() override;
     bool IsToggled(bool force = false);
@@ -224,8 +272,8 @@ public:
 
     void Save(CSimpleIni* ini, const char* section) const override;
 
-    void Draw() override;
-    void Description(char *buf, size_t bufsz) const override;
+    bool Draw() override;
+    int Description(char *buf, size_t bufsz) override;
     void Execute() override;
 };
 
@@ -235,7 +283,7 @@ class HotkeyTarget : public TBHotkey {
 private:
     const uint32_t types[3] = { 0xDB,0x200,0x400 };
     const char *type_labels[3] = { "NPC", "Signpost", "Item" };
-    const char *identifier_labels[3] = { "Model ID", "Gadget ID", "Item ModelID" };
+    const char *identifier_labels[3] = { "Model ID or Name", "Gadget ID or Name", "Item ModelID or Name" };
     enum HotkeyTargetType : int
     {
         NPC,
@@ -243,8 +291,8 @@ private:
         Item,
         Count
     } type = HotkeyTargetType::NPC;
-    uint32_t id = 0;
-    char name[140];
+    char id[140] = "nearest";
+    char name[140] = "";
 public:
     static const char* IniSection() { return "Target"; }
     const char* Name() const override { return IniSection(); }
@@ -253,8 +301,8 @@ public:
 
     void Save(CSimpleIni* ini, const char* section) const override;
 
-    void Draw() override;
-    void Description(char *buf, size_t bufsz) const override;
+    bool Draw() override;
+    int Description(char *buf, size_t bufsz) override;
     void Execute() override;
 };
 
@@ -274,14 +322,14 @@ public:
 
     void Save(CSimpleIni* ini, const char* section) const override;
 
-    void Draw() override;
-    void Description(char *buf, size_t bufsz) const override;
+    bool Draw() override;
+    int Description(char *buf, size_t bufsz) override;
     void Execute() override;
 };
 
 class HotkeyDialog : public TBHotkey {
 public:
-    size_t id = 0;
+    uint32_t id = 0;
     char name[140];
 
     static const char* IniSection() { return "Dialog"; }
@@ -291,8 +339,8 @@ public:
 
     void Save(CSimpleIni* ini, const char* section) const override;
 
-    void Draw() override;
-    void Description(char *buf, size_t bufsz) const override;
+    bool Draw() override;
+    int Description(char *buf, size_t bufsz) override;
     void Execute() override;
 };
 
@@ -309,8 +357,8 @@ public:
 
     void Save(CSimpleIni* ini, const char* section) const override;
 
-    void Draw() override;
-    void Description(char *buf, size_t bufsz) const override;
+    bool Draw() override;
+    int Description(char *buf, size_t bufsz) override;
     void Execute() override;
 };
 
@@ -327,8 +375,8 @@ public:
 
     void Save(CSimpleIni* ini, const char* section) const override;
 
-    void Draw() override;
-    void Description(char *buf, size_t bufsz) const override;
+    bool Draw() override;
+    int Description(char *buf, size_t bufsz) override;
     void Execute() override;
 };
 
@@ -352,7 +400,26 @@ public:
 
     void Save(CSimpleIni *ini, const char *section) const override;
 
-    void Draw() override;
-    void Description(char *buf, size_t bufsz) const override;
+    bool Draw() override;
+    int Description(char *buf, size_t bufsz) override;
+    void Execute() override;
+};
+class HotkeyGWKey : public TBHotkey {
+private:
+    GW::UI::ControlAction action = GW::UI::ControlAction::ControlAction_ActivateWeaponSet1;
+    int action_idx = 0;
+    static std::vector<const char*> labels;
+public:
+    static std::vector < std::pair< GW::UI::ControlAction, GuiUtils::EncString* > > control_labels;
+
+    static const char* IniSection() { return "GWHotkey"; }
+    const char* Name() const override { return IniSection(); }
+
+    HotkeyGWKey(CSimpleIni* ini, const char* section);
+
+    void Save(CSimpleIni* ini, const char* section) const override;
+
+    bool Draw() override;
+    int Description(char* buf, size_t bufsz) override;
     void Execute() override;
 };

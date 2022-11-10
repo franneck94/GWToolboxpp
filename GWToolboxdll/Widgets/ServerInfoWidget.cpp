@@ -1,21 +1,16 @@
 #include "stdafx.h"
 
 #include <GWCA/Constants/Constants.h>
+#include <GWCA/Packets/StoC.h>
 
 #include <GWCA/Context/GameContext.h>
 #include <GWCA/Context/CharContext.h>
-#include <GWCA/Context/MapContext.h>
-#include <GWCA/Context/WorldContext.h>
-
-#include <GWCA/GameContainers/Array.h>
-#include <GWCA/GameContainers/GamePos.h>
 
 #include <GWCA/GameEntities/Title.h>
 
-#include <GWCA/Managers/MapMgr.h>
 #include <GWCA/Managers/StoCMgr.h>
 
-#include <GuiUtils.h>
+#include <Utils/GuiUtils.h>
 
 #include <Modules/Resources.h>
 #include <Widgets/ServerInfoWidget.h>
@@ -89,15 +84,21 @@ void ServerInfoWidget::Update(float) {
         current_server_info->last_update = time(nullptr);
         server_info_fetcher = std::thread([this]() {
             // Need to check details
-            std::string json_str = "";
-            unsigned int tries = 0;
-            while (tries < 1 && json_str.empty()) {
-                json_str = Resources::Instance().Download(L"https://api.ipgeolocation.io/ipgeo?apiKey=" IPGEO_API_KEY L"&ip=" + GuiUtils::StringToWString(current_server_info->ip));
+            const std::string url = "https://api.ipgeolocation.io/ipgeo?apiKey=" IPGEO_API_KEY "&ip=" + current_server_info->ip;
+            int tries = 0;
+            std::string response;
+            bool success = false;
+            do {
+                success = Resources::Instance().Download(url, response);
                 tries++;
+            } while (!success && tries < 5);
+            if (!success) {
+                Log::Log("Failed to download %s\n%s", url.c_str(), response.c_str());
+                return;
             }
-            if (!json_str.empty()) {
+            if (!response.empty()) {
                 using Json = nlohmann::json;
-                Json json = Json::parse(json_str.c_str());
+                Json json = Json::parse(response.c_str());
                 if (current_server_info->city.empty() && json["city"].is_string())
                     current_server_info->city = json["city"];
                 if (current_server_info->country.empty() && json["country_name"].is_string())
@@ -135,7 +136,7 @@ void ServerInfoWidget::Draw(IDirect3DDevice9*) {
     ImGui::SetCursorPos(cur);
     ImGui::Text(server_ip);
     ImGui::PopFont();
-    
+
     if (server_location) {
         cur = ImGui::GetCursorPos();
         ImGui::SetCursorPos(ImVec2(cur.x + 1, cur.y + 1));

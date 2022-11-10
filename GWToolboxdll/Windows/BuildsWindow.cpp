@@ -2,8 +2,15 @@
 
 #include <GWCA/Constants/Constants.h>
 
+#include <GWCA/Packets/Opcodes.h>
+
+#include <GWCA/Context/GameContext.h>
+#include <GWCA/Context/WorldContext.h>
+
 #include <GWCA/GameContainers/Array.h>
 #include <GWCA/GameEntities/Agent.h>
+#include <GWCA/GameEntities/Player.h>
+#include <GWCA/GameEntities/Attribute.h>
 
 #include <GWCA/Managers/MapMgr.h>
 #include <GWCA/Managers/ChatMgr.h>
@@ -13,7 +20,7 @@
 #include <GWCA/Managers/GameThreadMgr.h>
 #include <GWCA/Managers/PlayerMgr.h>
 
-#include <GuiUtils.h>
+#include <Utils/GuiUtils.h>
 #include <Logger.h>
 
 #include <Modules/Resources.h>
@@ -26,11 +33,70 @@ bool order_by_changed = false;
 
 #define INI_FILENAME L"builds.ini"
 
+BuildsWindow::Build::Build(const char* n, const char* c) {
+    GuiUtils::StrCopy(name, n, sizeof(name));
+    GuiUtils::StrCopy(code, c, sizeof(code));
+    memset(&skill_template, sizeof(skill_template), 0);
+    skill_template.primary = skill_template.secondary = GW::Constants::Profession::None;
+}
+
+const GW::SkillbarMgr::SkillTemplate* BuildsWindow::Build::decode() {
+    if (!decoded() && !GW::SkillbarMgr::DecodeSkillTemplate(&skill_template, code)) {
+        skill_template.primary = skill_template.secondary = GW::Constants::Profession::None;
+    }
+    return decoded() ? &skill_template : nullptr;
+}
+
+const GW::Constants::SkillID* BuildsWindow::Build::skills() {
+    if (!decode()) {
+        return nullptr;
+    }
+    return skill_template.skills;
+}
+const GW::Constants::SkillID* BuildsWindow::GetPreferredSkillOrder(const GW::Constants::SkillID* skill_ids, size_t* found_idx) {
+    for (size_t k = 0; k < preferred_skill_order_builds.size();k++) {
+        Build& build = preferred_skill_order_builds[k];
+        bool found = false;
+        const GW::Constants::SkillID* skills = build.skills();
+        for (size_t i = 0; skills && i < 8; i++) {
+            found = false;
+            for (size_t j = 0; !found && j < 8; j++) {
+                auto* skill = GW::SkillbarMgr::GetSkillConstantData(skill_ids[j]);
+                found = skill && (skill->skill_id == skills[i] || skill->skill_id_pvp == skills[i]);
+            }
+            if (!found) {
+                break;
+            }
+        }
+        if (found) {
+            if (found_idx)
+                *found_idx = k;
+            return skills;
+        }
+    }
+    return nullptr;
+}
+void BuildsWindow::OnSkillbarLoad(GW::HookStatus*, GW::UI::UIMessage message_id, void* wParam, void*) {
+    if (message_id != GW::UI::UIMessage::kSendLoadSkillbar)
+        return;
+    struct Pack {
+        uint32_t agent_id;
+        GW::Constants::SkillID skills[8];
+    } *pack = (Pack*)wParam;
+    const GW::Constants::SkillID* found = Instance().GetPreferredSkillOrder(pack->skills);
+    if (found && memcmp(pack->skills, found, sizeof(pack->skills)) != 0) {
+        // Copy across the new order before the send is done
+        memcpy(pack->skills, found, sizeof(pack->skills));
+        Log::Info("Preferred skill order loaded");
+    }
+}
 void BuildsWindow::Initialize() {
     ToolboxWindow::Initialize();
     send_timer = TIMER_INIT();
 
     GW::Chat::CreateCommand(L"loadbuild", CmdLoad);
+    GW::UI::RegisterUIMessageCallback(&on_load_skills_entry, GW::UI::UIMessage::kSendLoadSkillbar, OnSkillbarLoad);
+    //GW::CtoS::RegisterPacketCallback(&on_load_skills_entry, GAME_CMSG_SKILLBAR_LOAD, OnSkillbarLoad);
 }
 void BuildsWindow::DrawHelp() {
     if (!ImGui::TreeNodeEx("Build Chat Commands", ImGuiTreeNodeFlags_FramePadding | ImGuiTreeNodeFlags_SpanAvailWidth))
@@ -110,6 +176,9 @@ void BuildsWindow::DrawSettingInternal() {
         order_by_changed = true;
         order_by_index = !order_by_name;
     }
+    if (ImGui::Button(reinterpret_cast<const char*>(ICON_FA_USER_COG " View Preferred Skill Orders"))) {
+        preferred_skill_orders_visible = !preferred_skill_orders_visible;
+    }
 }
 
 void BuildsWindow::DrawBuildSection(TeamBuild& tbuild, unsigned int j) {
@@ -185,14 +254,14 @@ void BuildsWindow::DrawBuildSection(TeamBuild& tbuild, unsigned int j) {
         SendPcons(tbuild, j);
     }
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Send this build's Pcons to team chat");
-    auto pcons = PconsWindow::Instance().pcons;
+    const auto& pcons = PconsWindow::Instance().pcons;
         
     float pos_x = 0;
     float third_w = ImGui::GetContentRegionAvail().x / 3;
     unsigned int offset = 0;
     for (size_t i = 0; i < pcons.size(); i++) {
-        auto pcon = pcons[i];
-        bool active = build.pcons.find(pcon->ini) != build.pcons.end();
+        const auto pcon = pcons[i];
+        bool active = build.pcons.contains(pcon->ini);
         ImGui::SameLine(indent, pos_x += third_w);
         offset++;
         if (i % 3 == 0) {
@@ -202,12 +271,12 @@ void BuildsWindow::DrawBuildSection(TeamBuild& tbuild, unsigned int j) {
         }
                 
         char pconlabel[128];
-        snprintf(pconlabel, 128, "%s###pcon_%s", pcon->chat, pcon->ini);
+        snprintf(pconlabel, 128, "%s###pcon_%s", pcon->chat.c_str(), pcon->ini.c_str());
         if (ImGui::Checkbox(pconlabel, &active)) {
             if (active)
                 build.pcons.emplace(pcon->ini);
             else
-                build.pcons.erase((char*)pcon->ini);
+                build.pcons.erase(pcon->ini);
             builds_changed = true;
         }
     }
@@ -216,6 +285,7 @@ void BuildsWindow::DrawBuildSection(TeamBuild& tbuild, unsigned int j) {
 
 void BuildsWindow::Draw(IDirect3DDevice9* pDevice) {
     UNREFERENCED_PARAMETER(pDevice);
+    DrawPreferredSkillOrders(pDevice);
     // @Cleanup: Use the BuildsWindow instance, not a static variable
     static GW::Constants::InstanceType last_instance_type = GW::Constants::InstanceType::Loading;
     GW::Constants::InstanceType instance_type = GW::Map::GetInstanceType();
@@ -238,7 +308,7 @@ void BuildsWindow::Draw(IDirect3DDevice9* pDevice) {
             for (TeamBuild& tbuild : teambuilds) {
                 ImGui::PushID(static_cast<int>(tbuild.ui_id));
                 ImGui::GetStyle().ButtonTextAlign = ImVec2(0.0f, 0.5f);
-                if (ImGui::Button(tbuild.name, ImVec2(ImGui::GetWindowContentRegionWidth()-ImGui::GetStyle().ItemInnerSpacing.x - 60.0f * ImGui::GetIO().FontGlobalScale, 0))) {
+                if (ImGui::Button(tbuild.name, ImVec2(ImGui::GetContentRegionAvail().x -ImGui::GetStyle().ItemInnerSpacing.x - 60.0f * ImGui::GetIO().FontGlobalScale, 0))) {
                     if (one_teambuild_at_a_time && !tbuild.edit_open) {
                         for (auto& tb : teambuilds) {
                             tb.edit_open = false;
@@ -253,7 +323,7 @@ void BuildsWindow::Draw(IDirect3DDevice9* pDevice) {
                 }
                 ImGui::PopID();
             }
-            if (ImGui::Button("Add Teambuild", ImVec2(ImGui::GetWindowContentRegionWidth(), 0))) {
+            if (ImGui::Button("Add Teambuild", ImVec2(ImGui::GetContentRegionAvail().x, 0))) {
                 teambuilds.push_back(TeamBuild(""));
                 teambuilds.back().edit_open = true; // open by default
                 teambuilds.back().builds.resize(4, Build("", ""));
@@ -274,16 +344,14 @@ void BuildsWindow::Draw(IDirect3DDevice9* pDevice) {
             ImGui::PushItemWidth(-120.0f);
             if (ImGui::InputText("Build Name", tbuild.name, 128)) builds_changed = true;
             ImGui::PopItemWidth();
-            const float btn_width = 50.0f * ImGui::GetIO().FontGlobalScale;
-            const float btn_offset = ImGui::GetContentRegionAvail().x - btn_width * 3 - ImGui::GetStyle().FramePadding.x * 3;
             for (unsigned int j = 0; j < tbuild.builds.size(); ++j) {
                 ImGui::PushID(static_cast<int>(j));
                 BuildsWindow::DrawBuildSection(tbuild, j);
                 ImGui::PopID();
             }
             if (ImGui::Checkbox("Show numbers", &tbuild.show_numbers)) builds_changed = true;
-            ImGui::SameLine(ImGui::GetWindowContentRegionWidth() * 0.6f);
-            if (ImGui::Button("Add Build", ImVec2(ImGui::GetWindowContentRegionWidth() * 0.4f, 0))) {
+            ImGui::SameLine(ImGui::GetContentRegionAvail().x * 0.6f);
+            if (ImGui::Button("Add Build", ImVec2(ImGui::GetContentRegionAvail().x * 0.4f, 0))) {
                 tbuild.builds.push_back(Build("", ""));
                 builds_changed = true;
             }
@@ -306,8 +374,8 @@ void BuildsWindow::Draw(IDirect3DDevice9* pDevice) {
                 ImGui::OpenPopup("Delete Teambuild?");
             }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Delete the teambuild");
-            ImGui::SameLine(ImGui::GetWindowContentRegionWidth() * 0.6f);
-            if (ImGui::Button("Close", ImVec2(ImGui::GetWindowContentRegionWidth() * 0.4f, 0))) {
+            ImGui::SameLine(ImGui::GetContentRegionAvail().x * 0.6f);
+            if (ImGui::Button("Close", ImVec2(ImGui::GetContentRegionAvail().x * 0.4f, 0))) {
                 tbuild.edit_open = false;
             }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Close this window");
@@ -330,6 +398,120 @@ void BuildsWindow::Draw(IDirect3DDevice9* pDevice) {
     }
 }
 
+void BuildsWindow::DrawPreferredSkillOrders(IDirect3DDevice9*) {
+    if (!preferred_skill_orders_visible)
+        return;
+    ImGui::SetNextWindowCenter(ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(300, 250), ImGuiCond_FirstUseEver);
+    if (!ImGui::Begin("Preferred Skill Orders", &preferred_skill_orders_visible, 0)) {
+        ImGui::End();
+        return;
+    }
+    ImGui::Text("When a set of skills is loaded that matches a set from this list, reorder it to match");
+    const float skill_height = ImGui::CalcTextSize(" ").y * 2.f;
+    const ImVec2 skill_size = ImVec2(skill_height, skill_height);
+    ImGui::Indent();
+    for (size_t j = 0; j < preferred_skill_order_builds.size();j++) {
+        Build& build = preferred_skill_order_builds[j];
+        const GW::Constants::SkillID* skills = build.skills();
+        for (size_t i = 0; skills && i < 8; i++) {
+            if (i) {
+                ImGui::SameLine(0,0);
+            }
+            ImGui::ImageCropped(*Resources::GetSkillImage(skills[i]), skill_size);
+            if (ImGui::IsItemHovered()) {
+                const GW::Skill* s = GW::SkillbarMgr::GetSkillConstantData(skills[i]);
+                if (s) {
+                    preferred_skill_order_tooltip.reset(s->name);
+                    ImGui::SetTooltip("%s", preferred_skill_order_tooltip.string().c_str());
+                }
+            }
+        }
+        ImGui::SameLine();
+        char btn_label[48];
+        snprintf(btn_label, sizeof(btn_label), "%s Remove###remove_preferred_skill_order_%d", reinterpret_cast<const char*>(ICON_FA_TRASH), j);
+        if (ImGui::Button(btn_label, ImVec2(0, skill_height))) {
+            preferred_skill_order_builds.erase(preferred_skill_order_builds.begin() + j);
+            Log::Info("Preferred skill order removed");
+            j--;
+        }
+    }
+    ImGui::Unindent();
+    ImGui::Separator();
+    ImGui::InputText("Build code###preferred_skill_order_code", preferred_skill_order_code,sizeof(preferred_skill_order_code));
+    ImGui::SameLine();
+    bool add_current = ImGui::Button(reinterpret_cast<const char*>(ICON_FA_COPY "###use_current_build_code"));
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Copy current build");
+    }
+    if (add_current) {
+        GetCurrentSkillBar(preferred_skill_order_code, sizeof(preferred_skill_order_code));
+    }
+
+    if (ImGui::Button("Add###add_preferred_skill_order")) {
+        const char* err = AddPreferredBuild(preferred_skill_order_code);
+        if (err) {
+            Log::Warning("%s",err);
+        }
+        else {
+            builds_changed = true;
+            Log::Info("Preferred skill order updated");
+        }
+    }
+    ImGui::End();
+}
+const char* BuildsWindow::AddPreferredBuild(const char* code) {
+    GW::SkillbarMgr::SkillTemplate templ;
+    if (!GW::SkillbarMgr::DecodeSkillTemplate(&templ, code)) {
+        return "Failed to decode skill template from build code";
+    }
+    size_t found = 0;
+    if (GetPreferredSkillOrder(templ.skills,&found)) {
+        preferred_skill_order_builds[found] = { code,code };
+        return nullptr;
+    }
+    preferred_skill_order_builds.push_back({ code,code });
+    return nullptr;
+}
+bool BuildsWindow::GetCurrentSkillBar(char* out, size_t out_len) {
+    if (!(out && out_len))
+        return false;
+    GW::SkillbarMgr::SkillTemplate templ;
+    GW::AgentLiving* agent = GW::Agents::GetPlayerAsAgentLiving();
+    GW::Player* player = agent ? GW::PlayerMgr::GetPlayerByID(agent->player_number) : nullptr;
+    GW::Skillbar* player_skillbar = GW::SkillbarMgr::GetPlayerSkillbar();
+    if (!(player && player_skillbar))
+        return false;
+    templ.primary = (GW::Constants::Profession)player->primary;
+    templ.secondary = (GW::Constants::Profession)player->secondary;
+    GW::PartyAttributeArray& party_attributes = GW::GameContext::instance()->world->attributes;
+    size_t attribute_idx = 0;
+    for (const GW::PartyAttribute& agent_attributes : party_attributes) {
+        if (agent_attributes.agent_id != agent->agent_id)
+            continue;
+        for (size_t attribute_id = 0; attribute_id < _countof(agent_attributes.attribute); attribute_id++) {
+            if (static_cast<GW::Constants::Attribute>(attribute_id) > GW::Constants::Attribute::Mysticism)
+                continue;
+            const GW::Attribute& attribute = agent_attributes.attribute[attribute_id];
+            if (!attribute.level_base)
+                continue;
+            ASSERT(attribute_idx < _countof(templ.attributes));
+            templ.attributes[attribute_idx].attribute = (GW::Constants::Attribute)attribute_id;
+            templ.attributes[attribute_idx].points = attribute.level_base;
+            attribute_idx++;
+        }
+    }
+    for (attribute_idx; attribute_idx < _countof(templ.attributes); attribute_idx++) {
+        templ.attributes[attribute_idx].attribute = GW::Constants::Attribute::None;
+        templ.attributes[attribute_idx].points = 0;
+    }
+    for (size_t i = 0; i < _countof(templ.skills);i++) {
+        // Ensure skill encoded is the pve version
+        auto* skill = GW::SkillbarMgr::GetSkillConstantData(player_skillbar->skills[i].skill_id);
+        templ.skills[i] = skill->IsPvP() ? skill->skill_id_pvp : skill->skill_id;
+    }
+    return GW::SkillbarMgr::EncodeSkillTemplate(templ, out, out_len) && GW::SkillbarMgr::DecodeSkillTemplate(&templ, out);
+}
 const char* BuildsWindow::BuildName(unsigned int idx) const {
     if (idx < teambuilds.size()) {
         return teambuilds[idx].name;
@@ -361,7 +543,7 @@ void BuildsWindow::View(const TeamBuild& tbuild, unsigned int idx) {
     t->name = new wchar_t[128];
     MultiByteToWideChar(CP_UTF8, 0, build.name, -1, t->name, 128);
     GW::GameThread::Enqueue([t] {
-        GW::UI::SendUIMessage(GW::UI::kOpenTemplate, t);
+        GW::UI::SendUIMessage(GW::UI::UIMessage::kOpenTemplate, t);
         delete[] t->code.m_buffer;
         delete[] t->name;
         });
@@ -448,7 +630,7 @@ void BuildsWindow::LoadPcons(const TeamBuild& tbuild, unsigned int idx) {
     std::vector<Pcon*> pcons_not_visible;
     PconsWindow* pcw = &PconsWindow::Instance();
     for (auto pcon : pcw->pcons) {
-        bool enable = build.pcons.find(pcon->ini) != build.pcons.end();
+        bool enable = build.pcons.contains(pcon->ini);
         if (enable) {
             if (!pcon->IsVisible()) {
                 // Don't enable pcons that the user cant see!
@@ -463,7 +645,7 @@ void BuildsWindow::LoadPcons(const TeamBuild& tbuild, unsigned int idx) {
     if (pcons_loaded.size()) {
         std::string pcons_str;
         size_t i = 0;
-        for (auto pcon : pcons_loaded) {
+        for (const auto pcon : pcons_loaded) {
             if (i) pcons_str += ", ";
             i = 1;
             pcons_str += pcon->abbrev;
@@ -474,7 +656,7 @@ void BuildsWindow::LoadPcons(const TeamBuild& tbuild, unsigned int idx) {
     if (pcons_not_visible.size()) {
         std::string pcons_str;
         size_t i = 0;
-        for (auto pcon : pcons_not_visible) {
+        for (const auto pcon : pcons_not_visible) {
             if (i) pcons_str += ", ";
             i = 1;
             pcons_str += pcon->abbrev;
@@ -499,8 +681,8 @@ void BuildsWindow::SendPcons(const TeamBuild& tbuild, unsigned int idx, bool inc
         pconsStr = buf;
     }
     size_t cnt = 0;
-    for (auto pcon : PconsWindow::Instance().pcons) {
-        if (build.pcons.find(pcon->ini) == build.pcons.end())
+    for (const auto pcon : PconsWindow::Instance().pcons) {
+        if (!build.pcons.contains(pcon->ini))
             continue;
         if (cnt) pconsStr += ", ";
         cnt = 1;
@@ -622,10 +804,22 @@ void BuildsWindow::LoadFromFile() {
     if (inifile == nullptr) inifile = new CSimpleIni(false, false, false);
     inifile->LoadFile(Resources::GetPath(INI_FILENAME).c_str());
 
+
+
     // then load
+    preferred_skill_order_builds.clear();
     CSimpleIni::TNamesDepend entries;
+    inifile->GetAllKeys("preferred_skill_orders",entries);
+    for (CSimpleIni::Entry& entry : entries) {
+        AddPreferredBuild(entry.pItem);
+    }
+
+    entries.clear();
     inifile->GetAllSections(entries);
     for (CSimpleIni::Entry& entry : entries) {
+        if (memcmp(entry.pItem, "builds", 6) != 0) {
+            continue;
+        }
         const char* section = entry.pItem;
         int count = inifile->GetLongValue(section, "count", 12);
         teambuilds.push_back(TeamBuild(inifile->GetValue(section, "buildname", "")));
@@ -672,6 +866,13 @@ void BuildsWindow::SaveToFile() {
         // clear builds from ini
         inifile->Reset();
 
+
+        for (unsigned int i = 0; i < preferred_skill_order_builds.size(); ++i) {
+            const Build& tbuild = preferred_skill_order_builds[i];
+            const char* section = "preferred_skill_orders";
+            inifile->SetValue(section, tbuild.code, tbuild.code);
+        }
+
         // then save
         for (unsigned int i = 0; i < teambuilds.size(); ++i) {
             const TeamBuild& tbuild = teambuilds[i];
@@ -694,7 +895,7 @@ void BuildsWindow::SaveToFile() {
                     std::string pconsval;
                     snprintf(pconskey, 16, "pcons%d", j);
                     size_t k = 0;
-                    for (auto pconstr : build.pcons) {
+                    for (auto& pconstr : build.pcons) {
                         if (k) pconsval += ",";
                         k = 1;
                         pconsval += pconstr;

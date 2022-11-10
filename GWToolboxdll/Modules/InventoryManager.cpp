@@ -2,11 +2,14 @@
 
 #include <GWCA/Packets/Opcodes.h>
 
+#include <GWCA/GameEntities/Agent.h>
+
 #include <GWCA/Context/ItemContext.h>
 #include <GWCA/Context/TradeContext.h>
+#include <GWCA/Context/GameContext.h>
+#include <GWCA/Context/WorldContext.h>
 
 #include <GWCA/Managers/MapMgr.h>
-#include <GWCA/Managers/CtoSMgr.h>
 #include <GWCA/Managers/UIMgr.h>
 #include <GWCA/Managers/StoCMgr.h>
 #include <GWCA/Managers/ChatMgr.h>
@@ -15,71 +18,77 @@
 #include <GWCA/Managers/RenderMgr.h>
 #include <GWCA/Managers/TradeMgr.h>
 #include <GWCA/Managers/GameThreadMgr.h>
+#include <GWCA/Managers/PlayerMgr.h>
+#include <GWCA/Managers/AgentMgr.h>
+#include <GWCA/Managers/ItemMgr.h>
+
+#include <GWCA/Utilities/Hooker.h>
+#include <GWCA/Utilities/Scanner.h>
 
 #include <Logger.h>
-#include <GuiUtils.h>
+#include <Utils/GuiUtils.h>
 #include <Modules/InventoryManager.h>
 #include <Modules/GameSettings.h>
 #include <Windows/MaterialsWindow.h>
 
-namespace {
-    static ImVec4 ItemBlue = ImColor(153, 238, 255).Value;
-    static ImVec4 ItemPurple = ImColor(187, 137, 237).Value;
-    static ImVec4 ItemGold = ImColor(255, 204, 86).Value;
+#include <Modules/Resources.h>
 
-    static const char* bag_names[5] = {
+namespace {
+    ImVec4 ItemBlue = ImColor(153, 238, 255).Value;
+    ImVec4 ItemPurple = ImColor(187, 137, 237).Value;
+    ImVec4 ItemGold = ImColor(255, 204, 86).Value;
+
+    const char* bag_names[5] = {
         "None",
         "Backpack",
         "Belt Pouch",
         "Bag 1",
         "Bag 2"
     };
-    void OpenWiki(std::wstring& term) {
-        // @Enhancement: Would be nice to use GW's "/wiki" hook in here, but don't want to bother with another RVA so do it ourselves.
-        // @Cleanup: Should really properly url encode the string here, but modern browsers clean up after our mess. Test with Creme Brulees.
-        if (!term.size())
-            return;
-        uint32_t language = GW::UI::GetPreference(GW::UI::Preference_TextLanguage);
-        wchar_t* wiki_prefix = L"https://wiki.guildwars.com/wiki/?search=%s";
-        switch (language) {
-        case 3: // German wiki
-            wiki_prefix = L"https://www.guildwiki.de/wiki/?search=%s";
-            break;
-        }
-        wchar_t cmd[256];
-        swprintf(cmd, _countof(cmd), wiki_prefix, term.c_str());
-        ShellExecuteW(NULL, L"open", cmd, NULL, NULL, SW_SHOWNORMAL);
-    }
-    static bool IsMapReady()
+
+    bool IsMapReady()
     {
         return GW::Map::GetInstanceType() != GW::Constants::InstanceType::Loading && !GW::Map::GetIsObserving() && GW::MemoryMgr::GetGWWindowHandle() == GetActiveWindow();
     }
-    std::vector<uint32_t> pending_moves;
-    bool get_pending_move(uint32_t bag_idx, uint32_t slot) {
+    std::unordered_map<uint32_t, std::pair<uint16_t,clock_t>> pending_moves; // { bag_idx | slot, { quantity_to_move,move_started_at} }
+    uint16_t get_pending_move(uint32_t bag_idx, uint32_t slot) {
         uint32_t bag_slot = (uint32_t)bag_idx << 16 | slot;
-        return std::find(pending_moves.begin(), pending_moves.end(), bag_slot) != pending_moves.end();
+        auto found = pending_moves.find(bag_slot);
+        if (found == pending_moves.end())
+            return 0;
+        if (TIMER_DIFF(found->second.second) > 3000) // 3 second timeout incase of hanging moves
+            return 0;
+        return found->second.first;
     }
-    void set_pending_move(uint32_t bag_idx, uint32_t slot) {
+    void set_pending_move(uint32_t bag_idx, uint32_t slot, uint16_t quantity_to_move) {
         uint32_t bag_slot = (uint32_t)bag_idx << 16 | slot;
-        pending_moves.push_back(bag_slot);
+        pending_moves[bag_slot] = { (uint16_t)(get_pending_move(bag_idx, slot) + quantity_to_move), TIMER_INIT() };
     }
+
     // GW Client doesn't actually know max material storage size for the account.
-    // We can make a guess by checking how many materials are currently in storage.
-    uint16_t MaxMaterialStorage() {
-        uint16_t max_mat_storage_size = 250u;
-        GW::Bag* bag = GW::Items::GetBag(GW::Constants::Bag::Material_Storage);
-        if (!bag || bag->items.valid() || !bag->items_count)
-            return max_mat_storage_size;
-        GW::Item* b_item = nullptr;
-        for (size_t i = GW::Constants::MaterialSlot::Bone; i < GW::Constants::MaterialSlot::N_MATS; i++) {
-            b_item = bag->items[i];
-            if (!b_item || b_item->quantity <= max_mat_storage_size)
-                continue;
-            while (b_item->quantity > max_mat_storage_size) {
-                max_mat_storage_size += 250u;
+// We can make a guess by checking how many materials are currently in storage.
+    uint16_t MaxSlotSize(GW::Constants::Bag bag_idx) {
+        uint16_t slot_size = 250u;
+        switch (bag_idx) {
+        case GW::Constants::Bag::Material_Storage:
+            GW::Bag* bag = GW::Items::GetBag(bag_idx);
+            if (!bag || !bag->items.valid() || !bag->items_count)
+                return slot_size;
+            GW::Item* b_item = nullptr;
+            for (size_t i = GW::Constants::MaterialSlot::Bone; i < GW::Constants::MaterialSlot::N_MATS; i++) {
+                b_item = bag->items[i];
+                if (!b_item || b_item->quantity <= slot_size)
+                    continue;
+                while (b_item->quantity > slot_size) {
+                    slot_size += 250u;
+                }
             }
+            break;
         }
-        return max_mat_storage_size;
+        return slot_size;
+    }
+    uint16_t MaxSlotSize(uint32_t bag_idx) {
+        return MaxSlotSize(static_cast<GW::Constants::Bag>(bag_idx));
     }
 
     uint16_t move_materials_to_storage(GW::Item* item) {
@@ -89,16 +98,21 @@ namespace {
         int islot = GW::Items::GetMaterialSlot(item);
         if (islot < 0 || (int)GW::Constants::N_MATS <= islot) return 0;
         uint32_t slot = static_cast<uint32_t>(islot);
-        const uint16_t max_in_slot = MaxMaterialStorage();
-        uint16_t availaible = max_in_slot;
+        const uint16_t max_in_slot = MaxSlotSize(GW::Constants::Bag::Material_Storage);
+        uint16_t available = max_in_slot;
         GW::Item* b_item = GW::Items::GetItemBySlot(GW::Constants::Bag::Material_Storage, slot + 1);
         if (b_item) {
             if (b_item->quantity >= max_in_slot)
                 return 0;
-            availaible = max_in_slot - b_item->quantity;
+            available -= b_item->quantity;
         }
-        uint16_t will_move = std::min<uint16_t>(item->quantity, availaible);
-        if (will_move) GW::Items::MoveItem(item, GW::Constants::Bag::Material_Storage, slot, will_move);
+        uint16_t pending_move = get_pending_move((uint32_t)GW::Constants::Bag::Material_Storage, slot);
+        available -= pending_move;
+        uint16_t will_move = std::min<uint16_t>(item->quantity, available);
+        if (will_move) {
+            set_pending_move((uint32_t)GW::Constants::Bag::Material_Storage, slot, will_move);
+            GW::Items::MoveItem(item, GW::Constants::Bag::Material_Storage, slot, will_move);
+        }
         return will_move;
     }
 
@@ -111,17 +125,18 @@ namespace {
         for (size_t bag_i = bag_first; bag_i <= bag_last; bag_i++) {
             GW::Bag* bag = GW::Items::GetBag(bag_i);
             if (!bag) continue;
+            uint16_t max_slot_size = MaxSlotSize(bag_i);
             size_t slot = bag->find2(item);
             while (slot != GW::Bag::npos) {
                 GW::Item* b_item = bag->items[slot];
                 // b_item can be null in the case of birthday present for instance.
 
-                if (!get_pending_move(bag_i, slot) && b_item != nullptr && b_item->quantity < 250u) {
-                    uint16_t availaible = 250u - b_item->quantity;
+                if (b_item != nullptr && b_item->quantity < max_slot_size) {
+                    uint16_t availaible = max_slot_size - get_pending_move(bag_i, slot) - b_item->quantity;
                     uint16_t will_move = std::min<uint16_t>(availaible, remaining);
                     if (will_move > 0) {
                         GW::Items::MoveItem(item, b_item, will_move);
-                        set_pending_move(bag_i, slot);
+                        set_pending_move(bag_i, slot, will_move);
                         remaining -= will_move;
                     }
                     if (remaining == 0)
@@ -138,13 +153,18 @@ namespace {
         for (size_t bag_i = bag_first; bag_i <= bag_last; bag_i++) {
             GW::Bag* bag = GW::Items::GetBag(bag_i);
             if (!bag) continue;
+            uint16_t max_slot_size = MaxSlotSize(bag_i);
             size_t slot = bag->find1(0);
             // The reason why we test if the slot has no item is because birthday present have ModelId == 0
             while (slot != GW::Bag::npos) {
-                if (!get_pending_move(bag_i, slot) && bag->items[slot] == nullptr) {
-                    set_pending_move(bag_i, slot);
-                    GW::Items::MoveItem(item, bag, slot, quantity);
-                    return quantity;
+                if (bag->items[slot] == nullptr) {
+                    uint16_t available = max_slot_size - get_pending_move(bag_i, slot);
+                    uint16_t will_move = std::min<uint16_t>(quantity, available);
+                    if (will_move > 0) {
+                        set_pending_move(bag_i, slot, will_move);
+                        GW::Items::MoveItem(item, bag, slot, will_move);
+                        return will_move;
+                    }
                 }
                 slot = bag->find1(0, slot + 1);
             }
@@ -157,7 +177,7 @@ namespace {
         uint16_t to_move = std::min<uint16_t>(item->quantity, quantity);
         uint16_t remaining = to_move;
         if (page == static_cast<size_t>(GW::Constants::StoragePane::Material_Storage)) {
-            if (!item->GetIsMaterial()) 
+            if (!item->GetIsMaterial())
                 return 0;
             remaining -= move_materials_to_storage(item);
         }
@@ -168,10 +188,6 @@ namespace {
         const size_t storage1 = static_cast<size_t>(GW::Constants::Bag::Storage_1);
         const size_t bag_index = storage1 + page;
         ASSERT(GW::Items::GetBag(bag_index));
-
-        // For materials, we always try to move what we can into the material page
-        if (remaining && item->GetIsMaterial())
-            remaining -= move_materials_to_storage(item);
 
         // if the item is stackable we try to complete stack that already exist in the current storage page
         if(remaining)
@@ -185,20 +201,32 @@ namespace {
         ASSERT(item && item->quantity);
         uint16_t to_move = std::min<uint16_t>(item->quantity,quantity);
         uint16_t remaining = to_move;
-        if (GW::Items::GetIsStorageOpen() && GameSettings::Instance().move_item_to_current_storage_pane) {
+        bool is_storage_open = GW::Items::GetIsStorageOpen();
+        if (remaining && is_storage_open && item->GetIsMaterial() && GameSettings::Instance().move_materials_to_current_storage_pane) {
             size_t current_storage = GW::Items::GetStoragePage();
             remaining -= move_item_to_storage_page(item, current_storage, remaining);
         }
-        if (item->GetIsMaterial() && remaining)
+        if(remaining && item->GetIsMaterial())
             remaining -= move_materials_to_storage(item);
-        
+
+        if (remaining && is_storage_open && GameSettings::Instance().move_item_to_current_storage_pane) {
+            size_t current_storage = GW::Items::GetStoragePage();
+            remaining -= move_item_to_storage_page(item, current_storage, remaining);
+        }
+
+
         const size_t storage1 = static_cast<size_t>(GW::Constants::Bag::Storage_1);
         const size_t storage14 = static_cast<size_t>(GW::Constants::Bag::Storage_14);
 
-        if(remaining)
-            remaining -= complete_existing_stack(item, storage1, storage14, remaining);
         if (remaining)
-            remaining -= move_to_first_empty_slot(item, storage1, storage14, remaining);
+            remaining -= complete_existing_stack(item, storage1, storage14, remaining);
+        while (remaining) {
+            uint16_t moved = move_to_first_empty_slot(item, storage1, storage14, remaining);
+            if (!moved)
+                break;
+            remaining -= moved;
+        }
+
         return to_move - remaining;
     }
 
@@ -212,11 +240,13 @@ namespace {
         uint16_t remaining = to_move;
         // If item is stackable, try to complete similar stack
         remaining -= complete_existing_stack(item, backpack, bag2, remaining);
-        if (remaining == to_move) {
-            // If we moved some, drop out here. If we didn't move any, shift everything.
-            remaining -= move_to_first_empty_slot(item, backpack, bag2, remaining);
+        while (remaining) {
+            uint16_t moved = move_to_first_empty_slot(item, backpack, bag2, remaining);
+            if (!moved)
+                break;
+            remaining -= moved;
         }
-            
+
         return to_move - remaining;
     }
 
@@ -264,6 +294,26 @@ namespace {
         }
         pending_moves.clear();
     }
+    void move_all_item(InventoryManager::Item* like_item) {
+        ASSERT(like_item && like_item->bag);
+        if (like_item->bag->IsInventoryBag()) {
+            std::vector<InventoryManager::Item*> items = filter_items(GW::Constants::Bag::Backpack, GW::Constants::Bag::Bag_2, [like_item](InventoryManager::Item* cmp) {
+                return cmp && InventoryManager::IsSameItem(like_item, cmp);
+                });
+            for (auto& item : items) {
+                move_item_to_storage(item);
+            }
+        }
+        else {
+            std::vector<InventoryManager::Item*> items = filter_items(GW::Constants::Bag::Material_Storage, GW::Constants::Bag::Storage_14, [like_item](InventoryManager::Item* cmp) {
+                return cmp && InventoryManager::IsSameItem(like_item, cmp);
+                });
+            for (auto& item : items) {
+                move_item_to_inventory(item);
+            }
+        }
+        pending_moves.clear();
+    }
     void store_all_upgrades() {
         std::vector<InventoryManager::Item*> items = filter_items(GW::Constants::Bag::Backpack, GW::Constants::Bag::Bag_2, [](InventoryManager::Item* item) {
             return item && item->type == 8;
@@ -274,8 +324,9 @@ namespace {
         pending_moves.clear();
     }
 
+
     // Move a whole stack into/out of storage
-    uint16_t move_item(GW::Item* item) {
+    uint16_t move_item(GW::Item* item, uint16_t quantity = 1000u) {
         // Expected behaviors
         //  When clicking on item in inventory
         //   case storage close (or move_item_to_current_storage_pane = false):
@@ -299,7 +350,7 @@ namespace {
             return 0;
         }
         bool is_inventory_item = item->bag->IsInventoryBag();
-        uint16_t remaining = item->quantity;
+        uint16_t remaining = std::min<uint16_t>(item->quantity, quantity);
         if (is_inventory_item) {
             remaining -= move_item_to_storage(item, remaining);
         }
@@ -314,6 +365,9 @@ namespace {
 
     GW::UI::WindowPosition* inventory_bags_window_position = nullptr;
 
+    typedef void(__fastcall* AddItemRowToWindow_pt)(void* ecx, void* edx, uint32_t frame, uint32_t item_id);
+    AddItemRowToWindow_pt AddItemRowToWindow_Func = 0;
+    AddItemRowToWindow_pt RetAddItemRowToWindow = 0;
 
     // x, y, z, w; Top, right, bottom, left
     struct Rect {
@@ -327,19 +381,21 @@ namespace {
         Rect() { top = right = bottom = left = 0.0f; }
         Rect(float _x, float _y, float _z, float _w) { top = _x; right = _y; bottom = _z; left = _w; }
     };
-    inline Rect& operator*=(Rect& lhs, float rhs) {
+
+    Rect& operator*=(Rect& lhs, float rhs) {
         lhs.top *= rhs;
         lhs.bottom *= rhs;
         lhs.left *= rhs;
         lhs.right *= rhs;
         return lhs;
     }
-    inline Rect operator*(float lhs, Rect rhs) {
+
+    Rect operator*(float lhs, Rect rhs) {
         rhs *= lhs;
         return rhs;
     }
 
-    
+
     const Rect GetGWWindowPadding() {
         Rect gw_window_padding = { 33.f, 14.f, 14.f, 18.f };
         gw_window_padding *= GuiUtils::GetGWScaleMultiplier();
@@ -372,6 +428,30 @@ namespace {
 
     GW::HookEntry on_offer_item_hook;
     bool check_context_menu_position = false;
+    DWORD is_right_clicking = 0;
+    DWORD mouse_moved = 0;
+
+    struct PreMoveItemStruct {
+        uint32_t item_id;
+        uint32_t bag_id;
+        uint32_t slot;
+        bool prompt_split_stack = false;
+    };
+
+    void prompt_split_stack(GW::Item* item) {
+        PreMoveItemStruct details;
+        details.item_id = item->item_id;
+        // Doesn't matter where the prompt is asking to move to, as long as its not the same slot; we're going to override later.
+        details.bag_id = static_cast<uint32_t>(GW::Constants::Bag::Backpack);// empty_bag_id;
+        details.slot = 0;// empty_slot;
+        if (item->bag->index == details.bag_id && item->slot == details.slot)
+            details.slot++;
+        details.prompt_split_stack = true;
+        GW::UI::SendUIMessage(GW::UI::UIMessage::kMoveItem, &details);
+        //OnPreMoveItem(7, &details);
+        InventoryManager::Instance().stack_prompt_item_id = item->item_id;
+    }
+
 
     int CountInventoryBagSlots() {
         int slots = 0;
@@ -501,53 +581,120 @@ namespace {
         }
     }
 #endif
-
 } // namespace
 InventoryManager::InventoryManager()
-{
+    : tome_pending_stage(), pending_transaction() {
     current_salvage_session.salvage_item_id = 0;
     is_movable = is_resizable = has_closebutton = can_show_in_main_window = false;
 }
+
 InventoryManager::~InventoryManager()
 {
     ClearPotentialItems();
 }
-void InventoryManager::Initialize() {
-    ToolboxUIElement::Initialize();
-    GW::StoC::RegisterPacketCallback<GW::Packet::StoC::GameSrvTransfer>(&on_map_change_entry, [this](GW::HookStatus*, GW::Packet::StoC::PacketBase*) {
-        CancelAll();
-        });
-    GW::Items::RegisterItemClickCallback(&ItemClick_Entry, ItemClickCallback);
-    GW::CtoS::RegisterPacketCallback(&ItemClick_Entry, GAME_CMSG_REQUEST_QUOTE,
-        [this](GW::HookStatus*, void* pak) -> void {
-            requesting_quote_type = 0;
-            if (pending_transaction.in_progress() || !ImGui::IsKeyDown(VK_CONTROL) || MaterialsWindow::Instance().GetIsInProgress()) {
-                return;
-            }
-            CtoS_QuoteItem* quote = (CtoS_QuoteItem*)pak;
-            requesting_quote_type = quote->type;
-        });
-    GW::StoC::RegisterPostPacketCallback<GW::Packet::StoC::QuotedItemPrice>(&ItemClick_Entry, [this](GW::HookStatus*, GW::Packet::StoC::QuotedItemPrice* packet) {
+void InventoryManager::OnUIMessage(GW::HookStatus* status, GW::UI::UIMessage message_id, void* wparam, void*) {
+    auto& instance = Instance();
+    switch (message_id) {
+        // About to request a quote for an item
+    case GW::UI::UIMessage::kSendMerchantRequestQuote: {
+        requesting_quote_type = 0;
+        if (instance.pending_transaction.in_progress() || !ImGui::IsKeyDown(ImGuiKey_ModCtrl) || MaterialsWindow::Instance().GetIsInProgress()) {
+            return;
+        }
+        requesting_quote_type = *(uint32_t*)wparam;
+    } break;
+        // About to move an item
+    case GW::UI::UIMessage::kSendMoveItem: {
+        uint32_t* packet = (uint32_t*)wparam;
+        uint32_t item_id = packet[0];
+        uint32_t quantity = packet[1];
+
+        if (item_id != instance.stack_prompt_item_id) {
+            instance.stack_prompt_item_id = 0;
+            return;
+        }
+        instance.stack_prompt_item_id = 0;
+        status->blocked = true;
+        move_item(GW::Items::GetItemById(item_id), (uint16_t)quantity);
+    } break;
+        // Quote for item has been received
+    case GW::UI::UIMessage::kQuotedItemPrice: {
         if (!requesting_quote_type)
             return;
-        if (pending_transaction.in_progress())
+        if (instance.pending_transaction.in_progress())
             return;
-        pending_cancel_transaction = true;
-        GW::Item* requested_item = GW::Items::GetItemById(packet->itemid);
+        instance.pending_cancel_transaction = true;
+        uint32_t* packet = (uint32_t*)wparam;
+        uint32_t item_id = packet[0];
+        uint32_t price = packet[1];
+        GW::Item* requested_item = GW::Items::GetItemById(item_id);
         if (!requested_item)
             return;
-        pending_transaction.type = requesting_quote_type;
-        pending_transaction.item_id = requested_item->item_id;
-        pending_transaction.price = packet->price;
+        instance.pending_transaction.type = requesting_quote_type;
+        instance.pending_transaction.item_id = item_id;
+        instance.pending_transaction.price = price;
         requesting_quote_type = 0;
-        show_transact_quantity_popup = true;
-        });
+        instance.show_transact_quantity_popup = true;
+    } break;
+        // Map left; cancel all actions
+    case GW::UI::UIMessage::kMapChange: {
+        instance.CancelAll();
+    } break;
+        // Item moved; clear prompt
+    case GW::UI::UIMessage::kMoveItem: {
+        instance.stack_prompt_item_id = 0;
+    } break;
+    }
+}
+
+void InventoryManager::Initialize() {
+    ToolboxUIElement::Initialize();
+    GW::Items::RegisterItemClickCallback(&ItemClick_Entry, ItemClickCallback);
+
+    GW::UI::UIMessage message_id_hooks[] = {
+        GW::UI::UIMessage::kSendMoveItem,
+        GW::UI::UIMessage::kSendMerchantRequestQuote,
+        GW::UI::UIMessage::kQuotedItemPrice,
+        GW::UI::UIMessage::kMapChange,
+        GW::UI::UIMessage::kMoveItem,
+        GW::UI::UIMessage::kSendUseItem
+    };
+    for (const auto message_id : message_id_hooks) {
+        GW::UI::RegisterUIMessageCallback(&ItemClick_Entry, message_id, OnUIMessage);
+    }
 
     GW::Trade::RegisterOfferItemCallback(&on_offer_item_hook, OnOfferTradeItem);
+
     inventory_bags_window_position = GW::UI::GetWindowPosition(GW::UI::WindowID::WindowID_InventoryBags);
+
+    AddItemRowToWindow_Func = reinterpret_cast<AddItemRowToWindow_pt>(GW::Scanner::Find(
+        "\x83\xc4\x04\x80\x78\x04\x06\x0f\x84\xd3\x00\x00\x00\x6a\x02\xff\x37", nullptr, -0x10));
+    if (AddItemRowToWindow_Func) {
+        GW::Hook::CreateHook(AddItemRowToWindow_Func, OnAddItemToWindow, reinterpret_cast<void**>(&RetAddItemRowToWindow));
+        GW::Hook::EnableHooks(AddItemRowToWindow_Func);
+    }
+}
+// Hide unsellable items from merchant
+void InventoryManager::OnAddItemToWindow(void* ecx, void* edx, uint32_t frame, uint32_t item_id) {
+    GW::Hook::EnterHook();
+    const auto item = GW::Items::GetItemById(item_id);
+    bool block_item = false;
+    if (item) {
+        if (Instance().hide_unsellable_items && !item->value) {
+            block_item = true;
+        }
+        if (Instance().hide_from_merchant_items.contains(item->model_id)) {
+            block_item = true;
+        }
+    }
+
+    if (!block_item) {
+        RetAddItemRowToWindow(ecx, edx, frame, item_id);
+    }
+    GW::Hook::LeaveHook();
 }
 void InventoryManager::OnOfferTradeItem(GW::HookStatus* status, uint32_t item_id, uint32_t quantity) {
-    if (ImGui::IsKeyDown(VK_SHIFT) || !Instance().trade_whole_stacks)
+    if (ImGui::IsKeyDown(ImGuiKey_ModShift) || !Instance().trade_whole_stacks)
         return; // Default behaviour; prompt user for amount
     if (quantity == 0) {
         const GW::Item* item = GW::Items::GetItemById(item_id);
@@ -557,35 +704,33 @@ void InventoryManager::OnOfferTradeItem(GW::HookStatus* status, uint32_t item_id
         }
     }
 }
-bool InventoryManager::WndProc(UINT message, WPARAM , LPARAM ) {
-    static DWORD is_right_clicking = 0;
-    static DWORD start_pos = 0;
-    static DWORD gw_cursor_moved_to = 0;
+bool InventoryManager::WndProc(UINT message, WPARAM wParam, LPARAM lParam) {
     // GW Deliberately makes a WM_MOUSEMOVE event right after right button is pressed.
     // Does this to "hide" the cursor when looking around.
     switch (message) {
+    case WM_INPUT: {
+        if (!(is_right_clicking && !mouse_moved && GET_RAWINPUT_CODE_WPARAM(wParam) == RIM_INPUT && lParam))
+            break; // Not raw input
+        UINT dwSize = sizeof(RAWINPUT);
+        BYTE lpb[sizeof(RAWINPUT)];
+        ASSERT(GetRawInputData((HRAWINPUT)lParam, RID_INPUT, lpb, &dwSize, sizeof(RAWINPUTHEADER)) == dwSize);
+
+        RAWINPUT* raw = (RAWINPUT*)lpb;
+        if ((raw->data.mouse.usFlags & MOUSE_MOVE_ABSOLUTE) == 0 && raw->data.mouse.lLastX && raw->data.mouse.lLastY) {
+            // If its a relative mouse move, process the action
+            mouse_moved = 1;
+        }
+    } break;
+
     case WM_RBUTTONDOWN:
         is_right_clicking = 1;
-        start_pos = GetMessagePos();
+        mouse_moved = 0;
         break;
-    case WM_MOUSEMOVE: {
-        if (!is_right_clicking)
-            break;
-        DWORD pos = GetMessagePos();
-        if (!gw_cursor_moved_to) {
-            // First move after right mouse clicked - GW moving cursor. Record the position.
-            gw_cursor_moved_to = pos;
-        }
-        // If the position is the same, its GW still messing with it.
-        if (gw_cursor_moved_to == pos) {
-            // Mouse not actually moved
-            break;
-        }
-        // This far, pos has changed. If it is the same pos as the starting position, then its a right click.
-        check_context_menu_position = pos == start_pos;
-        is_right_clicking = start_pos = gw_cursor_moved_to = 0;
-    } break;
-    case WM_LBUTTONDOWN: 
+    case WM_RBUTTONUP:
+        check_context_menu_position = mouse_moved != 1;
+        is_right_clicking = mouse_moved = 0;
+        break;
+    case WM_LBUTTONDOWN:
     case WM_LBUTTONDBLCLK: {
             const Item* item = static_cast<Item*>(GW::Items::GetHoveredItem());
             GW::Bag* bag = item ? item->bag : nullptr;
@@ -611,6 +756,10 @@ void InventoryManager::SaveSettings(CSimpleIni* ini) {
     ini->SetBoolValue(Name(), VAR_NAME(salvage_from_bag_2), bags_to_salvage_from[GW::Constants::Bag::Bag_2]);
     ini->SetBoolValue(Name(), VAR_NAME(trade_whole_stacks), trade_whole_stacks);
     ini->SetBoolValue(Name(), VAR_NAME(wiki_link_on_context_menu), wiki_link_on_context_menu);
+    ini->SetBoolValue(Name(), VAR_NAME(hide_unsellable_items), hide_unsellable_items);
+    ini->SetBoolValue(Name(), VAR_NAME(change_secondary_for_tome), change_secondary_for_tome);
+
+    GuiUtils::MapToIni(ini, Name(), VAR_NAME(hide_from_merchant_items), hide_from_merchant_items);
 }
 void InventoryManager::LoadSettings(CSimpleIni* ini) {
     ToolboxUIElement::LoadSettings(ini);
@@ -622,6 +771,11 @@ void InventoryManager::LoadSettings(CSimpleIni* ini) {
     bags_to_salvage_from[GW::Constants::Bag::Bag_2] = ini->GetBoolValue(Name(), VAR_NAME(salvage_from_bag_2), bags_to_salvage_from[GW::Constants::Bag::Bag_2]);
     trade_whole_stacks = ini->GetBoolValue(Name(), VAR_NAME(trade_whole_stacks), trade_whole_stacks);
     wiki_link_on_context_menu = ini->GetBoolValue(Name(), VAR_NAME(wiki_link_on_context_menu), wiki_link_on_context_menu);
+    hide_unsellable_items = ini->GetBoolValue(Name(), VAR_NAME(hide_unsellable_items), hide_unsellable_items);
+    change_secondary_for_tome = ini->GetBoolValue(Name(), VAR_NAME(change_secondary_for_tome), change_secondary_for_tome);
+
+    hide_from_merchant_items =
+        GuiUtils::IniToMap<std::map<uint32_t, std::string>>(ini, Name(), VAR_NAME(hide_from_merchant_items));
 }
 void InventoryManager::ClearSalvageSession(GW::HookStatus *status, void *)
 {
@@ -683,7 +837,7 @@ void InventoryManager::AttachSalvageListeners() {
         &salvage_hook_entry,
         [this](GW::HookStatus* status, GW::Packet::StoC::SalvageSessionSuccess*) {
             ClearSalvageSession(status);
-            GW::CtoS::SendPacket(0x4, GAME_CMSG_ITEM_SALVAGE_SESSION_DONE);
+            GW::Items::SalvageSessionDone();
         });
     GW::StoC::RegisterPacketCallback<GW::Packet::StoC::SalvageSession>(
         &salvage_hook_entry,
@@ -710,7 +864,7 @@ void InventoryManager::AttachTransactionListeners() {
         status->blocked = true;
         return;
         });
-    GW::StoC::RegisterPacketCallback<GW::Packet::StoC::QuotedItemPrice>(&salvage_hook_entry, [this](GW::HookStatus* status, GW::Packet::StoC::QuotedItemPrice* packet) {      
+    GW::StoC::RegisterPacketCallback<GW::Packet::StoC::QuotedItemPrice>(&salvage_hook_entry, [this](GW::HookStatus* status, GW::Packet::StoC::QuotedItemPrice* packet) {
         if (pending_transaction.item_id != packet->itemid) {
             pending_cancel_transaction = true;
             return;
@@ -786,7 +940,7 @@ void InventoryManager::ContinueSalvage() {
     if (current_item && current_salvage_session.salvage_item_id != 0) {
         // Popup dialog for salvage; salvage materials and cycle.
         ClearSalvageSession();
-        GW::CtoS::SendPacket(0x4, GAME_CMSG_ITEM_SALVAGE_MATERIALS);
+        GW::Items::SalvageMaterials();
         pending_salvage_at = (clock() / CLOCKS_PER_SEC);
         is_salvaging = true;
         return;
@@ -826,7 +980,7 @@ void InventoryManager::ContinueTransaction() {
         pending_transaction.setState(PendingTransaction::State::Quoting);
         auto packet = pending_transaction.quote();
         AttachTransactionListeners();
-        GW::CtoS::SendPacket(&packet);
+        GW::Merchant::RequestQuote((GW::Merchant::TransactionType)packet.type, { 0, packet.item_give_count,packet.item_give_ids }, { 0, packet.item_recv_count,packet.item_recv_ids });
     }break;
     case PendingTransaction::State::Quoting:
         // Check for timeout having asked for a quote.
@@ -852,7 +1006,9 @@ void InventoryManager::ContinueTransaction() {
         pending_transaction.setState(PendingTransaction::State::Transacting);
         auto packet = pending_transaction.transact();
         AttachTransactionListeners();
-        GW::CtoS::SendPacket(&packet);
+        GW::Merchant::TransactItems((GW::Merchant::TransactionType)packet.type,
+            packet.gold_give, { packet.item_give_count, packet.item_give_ids, packet.item_give_quantities },
+            packet.gold_recv, { packet.item_recv_count, packet.item_recv_ids, packet.item_recv_quantities });
     }break;
     case PendingTransaction::State::Transacting:
         // Check for timeout having agreed to buy or sell
@@ -936,7 +1092,7 @@ void InventoryManager::Salvage(Item* item, Item* kit) {
     if (!(pending_salvage_item.set(item) && pending_salvage_kit.set(kit)))
         return;
     AttachSalvageListeners();
-    GW::CtoS::SendPacket(0x10, GAME_CMSG_ITEM_SALVAGE_SESSION_OPEN, GW::GameContext::instance()->world->salvage_session_id, pending_salvage_kit.item_id, pending_salvage_item.item_id);
+    GW::Items::SalvageStart(pending_salvage_kit.item_id, pending_salvage_item.item_id);
     pending_salvage_at = (clock() / CLOCKS_PER_SEC);
     is_salvaging = true;
 }
@@ -947,7 +1103,7 @@ void InventoryManager::Identify(Item* item, Item* kit) {
         return;
     if(!(pending_identify_item.set(item) && pending_identify_kit.set(kit)))
         return;
-    GW::CtoS::SendPacket(0xC, GAME_CMSG_ITEM_IDENTIFY, pending_identify_kit.item_id, pending_identify_item.item_id);
+    GW::Items::IdentifyItem(pending_identify_kit.item_id, pending_identify_item.item_id);
     pending_identify_at = (clock() / CLOCKS_PER_SEC);
     is_identifying = true;
 }
@@ -956,15 +1112,9 @@ void InventoryManager::FetchPotentialItems() {
     if (salvage_all_type != SalvageAllType::None) {
         ClearPotentialItems();
         while ((found = GetNextUnsalvagedItem(context_item.item(), found)) != nullptr) {
-            PotentialItem* item = new PotentialItem();
-            GW::UI::AsyncDecodeStr(found->complete_name_enc ? found->complete_name_enc : found->name_enc, &item->name);
-            GW::UI::AsyncDecodeStr(found->name_enc, &item->short_name);
-            if(found->info_string)
-                GW::UI::AsyncDecodeStr(found->info_string, &item->desc);
-            item->item_id = found->item_id;
-            item->slot = found->slot;
-            item->bag = static_cast<GW::Constants::Bag>(found->bag->index + 1);
-            potential_salvage_all_items.push_back(item);
+            auto pi = new PotentialItem();
+            pi->set(found);
+            potential_salvage_all_items.push_back(pi);
         }
     }
 }
@@ -990,11 +1140,11 @@ InventoryManager::Item* InventoryManager::GetNextUnidentifiedItem(Item* start_af
     for (size_t bag_i = start_bag; bag_i <= end_bag; bag_i++) {
         GW::Bag* bag = GW::Items::GetBag(bag_i);
         if (!bag) continue;
-        GW::ItemArray items = bag->items;
+        GW::ItemArray& items = bag->items;
         items_found = 0;
         for (size_t i = 0; i < items.size() && items_found < bag->items_count; i++) {
             item = static_cast<Item*>(items[i]);
-            if (!item) 
+            if (!item)
                 continue;
             items_found++;
             if (item->GetIsIdentified())
@@ -1002,17 +1152,17 @@ InventoryManager::Item* InventoryManager::GetNextUnidentifiedItem(Item* start_af
             if (item->IsGreen() || item->type == static_cast<uint8_t>(GW::Constants::ItemType::Minipet))
                 continue;
             switch (identify_all_type) {
-            case IdentifyAllType::All:      
+            case IdentifyAllType::All:
                 return item;
-            case IdentifyAllType::Blue:     
+            case IdentifyAllType::Blue:
                 if (item->IsBlue())
                     return item;
                 break;
-            case IdentifyAllType::Purple:   
+            case IdentifyAllType::Purple:
                 if (item->IsPurple())
                     return item;
                 break;
-            case IdentifyAllType::Gold:     
+            case IdentifyAllType::Gold:
                 if (item->IsGold())
                     return item;
                 break;
@@ -1047,7 +1197,7 @@ InventoryManager::Item* InventoryManager::GetNextUnsalvagedItem(Item* kit, Item*
             continue;
         GW::Bag* bag = GW::Items::GetBag(bag_i);
         if (!bag) continue;
-        GW::ItemArray items = bag->items;
+        GW::ItemArray& items = bag->items;
         items_found = 0;
         for (size_t i = (bag_i == start_bag ? start_position : 0); i < items.size() && items_found < bag->items_count; i++) {
             item = static_cast<Item*>(items[i]);
@@ -1110,7 +1260,7 @@ std::pair<GW::Bag*, uint32_t> InventoryManager::GetAvailableInventorySlot(GW::It
     return { nullptr,0 };
 }
 GW::Item* InventoryManager::GetAvailableInventoryStack(GW::Item* like_item, bool entire_stack) {
-    if (!like_item || ((Item*)like_item)->IsStackable())
+    if (!like_item || static_cast<Item*>(like_item)->IsStackable())
         return nullptr;
     GW::Item* best_item = nullptr;
     GW::Bag** bags = GW::Items::GetBagArray();
@@ -1129,12 +1279,13 @@ GW::Item* InventoryManager::GetAvailableInventoryStack(GW::Item* like_item, bool
     }
     return best_item;
 }
-bool InventoryManager::IsSameItem(GW::Item* item1, GW::Item* item2) {
+bool InventoryManager::IsSameItem(const GW::Item* item1, const GW::Item* item2) {
     return item1 && item2
-        && (!item1->model_id || !item2->model_id || item1->model_id == item2->model_id)
-        && (!item1->model_file_id || !item2->model_file_id || item1->model_file_id == item2->model_file_id)
-        && (!item1->mod_struct_size || !item2->mod_struct_size || item1->mod_struct_size == item2->mod_struct_size)
-        && (!item1->interaction || !item2->interaction || item1->interaction == item2->interaction);
+        && (!item1->model_id || item1->model_id == item2->model_id)
+        && (!item1->model_file_id || item1->model_file_id == item2->model_file_id)
+        && (!item1->mod_struct_size || item1->mod_struct_size == item2->mod_struct_size)
+        && (!item1->interaction || item1->interaction == item2->interaction)
+        && (!item1->mod_struct_size || memcmp(item1->mod_struct,item2->mod_struct,item1->mod_struct_size * sizeof(item1->mod_struct[0])) == 0);
 }
 bool InventoryManager::IsPendingIdentify() {
     if (!pending_identify_kit.item_id || !pending_identify_item.item_id)
@@ -1162,9 +1313,11 @@ bool InventoryManager::IsPendingSalvage() {
 }
 void InventoryManager::DrawSettingInternal() {
     ImGui::TextDisabled("This module is responsible for extra item functions via ctrl+click, right click or double click");
+    ImGui::Checkbox("Hide unsellable items from merchant window", &hide_unsellable_items);
     ImGui::Checkbox("Move whole stacks into trade by default", &trade_whole_stacks);
     ImGui::ShowHelp("Shift drag to prompt for amount, drag without shift to move the whole stack into trade");
     ImGui::Checkbox("Show 'Guild Wars Wiki' link on item context menu", &wiki_link_on_context_menu);
+    ImGui::Checkbox("Prompt to change secondary profession when using a tome", &change_secondary_for_tome);
     ImGui::Text("Right click an item to open context menu in:");
     ImGui::Indent();
     ImGui::Checkbox("Exporable Area", &right_click_context_menu_in_explorable);
@@ -1185,10 +1338,44 @@ void InventoryManager::DrawSettingInternal() {
     ImGui::Checkbox("Bag 1", &bags_to_salvage_from[GW::Constants::Bag::Bag_1]);
     ImGui::SameLine();
     ImGui::Checkbox("Bag 2", &bags_to_salvage_from[GW::Constants::Bag::Bag_2]);
+
+    ImGui::Separator();
+    ImGui::Text("Hide items from merchant sell window:");
+    ImGui::BeginChild("hide_from_merchant_items", ImVec2(0.0F, hide_from_merchant_items.size() * 25.0F));
+    for (const auto& [item_id, item_name] : hide_from_merchant_items) {
+        ImGui::PushID(static_cast<int>(item_id));
+        ImGui::Text("%s (%d)", item_name.c_str(), item_id);
+        ImGui::SameLine();
+        const bool clicked = ImGui::Button(" X ");
+        ImGui::PopID();
+        if (clicked) {
+            Log::Info("Removed Item %s with ID (%d)", item_name.c_str(), item_id);
+            hide_from_merchant_items.erase(item_id);
+            break;
+        }
+    }
+    ImGui::EndChild();
+    ImGui::Separator();
+    bool submitted = false;
+    ImGui::Text("Add new item from merchant window:");
+    static int new_item_id;
+    static char buf[50];
+    ImGui::InputText("Item Name", buf, 50);
+    ImGui::InputInt("Item Model ID", &new_item_id);
+    submitted |= ImGui::Button("Add");
+    if (submitted && new_item_id > 0) {
+        const auto new_id = static_cast<uint32_t>(new_item_id);
+        if (!hide_from_merchant_items.contains(new_id)) {
+            hide_from_merchant_items[new_id] = std::string(buf);
+            Log::Info("Added Item %s with ID (%d)", buf, new_id);
+            std::ranges::fill(buf, '\0');
+            new_item_id = 0;
+        }
+    }
 }
 void InventoryManager::Update(float) {
     if (check_context_menu_position) {
-        const Item* item = static_cast<Item*>(GW::Items::GetHoveredItem());
+        const Item* item = reinterpret_cast<Item*>(GW::Items::GetHoveredItem());
         GW::Bag* bag = item ? item->bag : nullptr;
         if (bag) {
             // Item right clicked - spoof a click event
@@ -1199,7 +1386,7 @@ void InventoryManager::Update(float) {
     }
 
     if (pending_item_move_for_trade) {
-        Item* item = static_cast<Item*>(GW::Items::GetItemById(pending_item_move_for_trade));
+        Item* item = reinterpret_cast<Item*>(GW::Items::GetItemById(pending_item_move_for_trade));
         if (!item) {
             pending_item_move_for_trade = 0;
             return;
@@ -1246,6 +1433,7 @@ void InventoryManager::Draw(IDirect3DDevice9* device) {
     UNREFERENCED_PARAMETER(device);
     if (!GW::Map::GetIsMapLoaded())
         return;
+    DrawPendingTomeUsage();
 #if 0
     DrawInventoryOverlay();
 #endif
@@ -1254,8 +1442,8 @@ void InventoryManager::Draw(IDirect3DDevice9* device) {
     static bool show_inventory_context_menu = false;
     DrawItemContextMenu(show_item_context_menu);
     show_item_context_menu = false;
-    
-    
+
+
 
     /*
     *   Cog icon on inventory bags window
@@ -1311,7 +1499,7 @@ void InventoryManager::Draw(IDirect3DDevice9* device) {
 
 
 
-    
+
     if (show_transact_quantity_popup) {
         ImGui::OpenPopup("Transaction quantity");
         pending_transaction.setState(PendingTransaction::State::Prompt);
@@ -1331,7 +1519,8 @@ void InventoryManager::Draw(IDirect3DDevice9* device) {
                     if (item) {
                         // Set initial transaction amount to be the entire stack
                         pending_transaction_amount = item->quantity;
-                        if (item->GetIsMaterial() && !item->IsRareMaterial() && pending_transaction.type == GW::Merchant::TraderSell) {
+                        if (item->GetIsMaterial() && !item->IsRareMaterial()
+                            && (GW::Merchant::TransactionType)pending_transaction.type == GW::Merchant::TransactionType::TraderSell) {
                             pending_transaction_amount = static_cast<int>(floor(pending_transaction_amount / 10));
                         }
                     }
@@ -1351,7 +1540,7 @@ void InventoryManager::Draw(IDirect3DDevice9* device) {
                 ImGui::SetFocusID(id, ImGui::GetCurrentWindow());
             }
             show_transact_quantity_popup = false;
-            bool begin_transaction = (ImGui::GetFocusID() == id && ImGui::IsKeyPressed(ImGui::GetKeyIndex(ImGuiKey_Enter)));
+            bool begin_transaction = (ImGui::GetFocusID() == id && ImGui::IsKeyPressed(ImGuiKey_Enter));
             begin_transaction |= ImGui::Button("Continue");
             if (begin_transaction) {
                 pending_cancel_transaction = false;
@@ -1437,31 +1626,23 @@ void InventoryManager::Draw(IDirect3DDevice9* device) {
                     ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_Text));
                     break;
                 }
-                if (!pi->name.empty() && pi->name_s.empty()) {
-                    pi->name_s = GuiUtils::WStringToString(pi->name);
-                    pi->name_s = std::regex_replace(pi->name_s, sanitiser, "");
-                }
                 ImGui::PushID(static_cast<int>(pi->item_id));
-                ImGui::Checkbox(pi->name_s.c_str(),&pi->proceed);
-                const float item_name_length = ImGui::CalcTextSize(pi->name_s.c_str(), NULL, true).x;
+                ImGui::Checkbox(pi->name.string().c_str(),&pi->proceed);
+                const float item_name_length = ImGui::CalcTextSize(pi->name.string().c_str(), NULL, true).x;
                 longest_item_name_length = item_name_length > longest_item_name_length ? item_name_length : longest_item_name_length;
                 ImGui::PopStyleColor();
                 if (ImGui::IsItemHovered()) {
-                    if (!pi->desc.empty() && pi->desc_s.empty()) {
-                        pi->desc_s = GuiUtils::WStringToString(pi->desc);
-                        pi->desc_s = std::regex_replace(pi->desc_s, sanitiser, "");
-                    }
-                    ImGui::SetTooltip("%s",pi->desc_s.c_str());
+                    ImGui::SetTooltip("%s", pi->desc.string().c_str());
                 }
                 ImGui::SameLine(longest_item_name_length + wiki_btn_width);
                 if (ImGui::Button("Wiki", ImVec2(wiki_btn_width, 0))) {
-                    OpenWiki(pi->desc);
+                    GuiUtils::SearchWiki(pi->wiki_name.wstring());
                 }
                 ImGui::PopID();
                 has_items_to_salvage |= pi->proceed;
             }
             ImGui::Text("\n\nAre you sure?");
-            ImVec2 btn_width = ImVec2(ImGui::GetWindowContentRegionWidth() - ImGui::GetStyle().ItemSpacing.x, 0);
+            ImVec2 btn_width = ImVec2(ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x, 0);
             if (has_items_to_salvage) {
                 btn_width.x /= 2;
                 if (ImGui::Button("OK", btn_width)) {
@@ -1493,7 +1674,7 @@ bool InventoryManager::DrawItemContextMenu(bool open) {
         context_item.item_id = 0;
         return false;
     }
-    
+
 
     // NB: Be really careful here; a window has to be open for at LEAST 1 frame before closing it again.
 
@@ -1506,11 +1687,13 @@ bool InventoryManager::DrawItemContextMenu(bool open) {
     ImGui::PushStyleVar(ImGuiStyleVar_ButtonTextAlign, ImVec2(0, 0));
     ImGui::PushStyleColor(ImGuiCol_Button, ImColor(0, 0, 0, 0).Value);
     const ImVec2 size = ImVec2(250.0f * ImGui::GetIO().FontGlobalScale, 0);
-    if (context_item_name_s.empty() && !context_item_name_ws.empty()) {
-        context_item_name_s = GuiUtils::WStringToString(context_item_name_ws);
-    }
-    
-    ImGui::Text(context_item_name_s.c_str());
+    /*IDirect3DTexture9** tex = Resources::GetItemImage(context_item.wiki_name.wstring());
+    if (tex && *tex) {
+        const float text_height = ImGui::CalcTextSize(" ").y;
+        ImGui::Image(*tex, ImVec2(text_height, text_height));
+        ImGui::SameLine();
+    }*/
+    ImGui::Text(context_item.name.string().c_str());
     ImGui::Separator();
     // Shouldn't really fetch item() every frame, but its only when the menu is open and better than risking a crash
     if (GW::Map::GetInstanceType() == GW::Constants::InstanceType::Outpost) {
@@ -1540,6 +1723,19 @@ bool InventoryManager::DrawItemContextMenu(bool open) {
                 goto end_popup;
             }
         }
+        char buf[128];
+        if (context_item_actual->bag->IsInventoryBag()) {
+            snprintf(buf, 128, "Store All %s", context_item.plural_item_name.string().c_str());
+        }
+        else {
+            snprintf(buf, 128, "Withdraw All %s", context_item.plural_item_name.string().c_str());
+        }
+        if (ImGui::Button(buf, size)) {
+            ImGui::CloseCurrentPopup();
+            move_all_item(context_item_actual);
+            goto end_popup;
+        }
+
     }
     if (context_item_actual->IsIdentificationKit()) {
         IdentifyAllType type = IdentifyAllType::None;
@@ -1592,7 +1788,7 @@ bool InventoryManager::DrawItemContextMenu(bool open) {
     }
     if (wiki_link_on_context_menu && ImGui::Button("Guild Wars Wiki", size)) {
         ImGui::CloseCurrentPopup();
-        OpenWiki(context_item_name_ws);
+        GuiUtils::SearchWiki(context_item.wiki_name.wstring());
         goto end_popup;
     }
     end_popup:
@@ -1606,7 +1802,7 @@ void InventoryManager::ItemClickCallback(GW::HookStatus* status, uint32_t type, 
     Item* item = nullptr;
     switch (type) {
     case 7:   // Left click + ctrl
-        if (!ImGui::IsKeyDown(VK_CONTROL))
+        if (!ImGui::IsKeyDown(ImGuiKey_ModCtrl))
             return;
         break;
     case 8: // Double click - add to trade window if available
@@ -1634,14 +1830,14 @@ void InventoryManager::ItemClickCallback(GW::HookStatus* status, uint32_t type, 
     default:
         return;
     }
-    
+
     if (bag) {
         item = static_cast<Item*>(GW::Items::GetItemBySlot(bag, slot + 1));
     }
     else {
         item = static_cast<Item*>(GW::Items::GetHoveredItem());
     }
-    
+
     if (!item) return;
     bool is_inventory_item = item->bag->IsInventoryBag();
     bool is_storage_item = item->bag->IsStorageBag() || item->bag->IsMaterialStorage();
@@ -1655,33 +1851,182 @@ void InventoryManager::ItemClickCallback(GW::HookStatus* status, uint32_t type, 
             return; // Double looped.
         if (!im.context_item.set(item))
             return;
-        im.context_item_name_ws.clear();
-        im.context_item_name_s.clear();
-        GW::UI::AsyncDecodeStr(item->name_enc, &im.context_item_name_ws);
         im.show_item_context_menu = true;
         status->blocked = true;
         return;
-    } else if (type == 7 && ImGui::IsKeyDown(VK_CONTROL) && GameSettings::Instance().move_item_on_ctrl_click) {
+    } else if (type == 7 && ImGui::IsKeyDown(ImGuiKey_ModCtrl) && GameSettings::Instance().move_item_on_ctrl_click) {
         // Move item on ctrl click
-        move_item(item);
+        if (ImGui::IsKeyDown(ImGuiKey_ModShift) && item->quantity > 1)
+            prompt_split_stack(item);
+        else
+            move_item(item);
     }
 }
 void InventoryManager::ClearPotentialItems()
 {
-    for (PotentialItem* item : potential_salvage_all_items) {
+    for (const PotentialItem* item : potential_salvage_all_items) {
         delete item;
     }
     potential_salvage_all_items.clear();
+}
+
+// Change secondary if using a tome
+void InventoryManager::OnUseItem(GW::HookStatus* status, void* packet) {
+    uint32_t header = *(uint32_t*)packet;
+    if (header != GAME_CMSG_ITEM_USE)
+        return;
+    uint32_t item_id = ((uint32_t*)packet)[1];
+    auto& instance = Instance();
+    if (instance.tome_pending_stage != PendingTomeUseStage::None)
+        return;
+    GW::Item* item = GW::Items::GetItemById(item_id);
+    if (!item) return;
+    GW::Constants::Profession profession_needed = GW::Constants::Profession::None;
+    switch (item->model_id) {
+    case 21786:case 21796:
+        profession_needed = GW::Constants::Profession::Assassin;
+        break;
+    case 21787:case 21797:
+        profession_needed = GW::Constants::Profession::Mesmer;
+        break;
+    case 21788:case 21798:
+        profession_needed = GW::Constants::Profession::Necromancer;
+        break;
+    case 21789:case 21799:
+        profession_needed = GW::Constants::Profession::Elementalist;
+        break;
+    case 21790:case 21800:
+        profession_needed = GW::Constants::Profession::Monk;
+        break;
+    case 21791:case 21801:
+        profession_needed = GW::Constants::Profession::Warrior;
+        break;
+    case 21792:case 21802:
+        profession_needed = GW::Constants::Profession::Ranger;
+        break;
+    case 21793:case 21803:
+        profession_needed = GW::Constants::Profession::Dervish;
+        break;
+    case 21794:case 21804:
+        profession_needed = GW::Constants::Profession::Ritualist;
+        break;
+    case 21795:case 21805:
+        profession_needed = GW::Constants::Profession::Paragon;
+        break;
+    }
+    if (profession_needed != GW::Constants::Profession::None) {
+        instance.tome_pending_profession = (uint32_t)profession_needed;
+        instance.tome_pending_item_id = item_id;
+        instance.tome_pending_stage = PendingTomeUseStage::PromptUser;
+        status->blocked = true;
+    }
+}
+
+// Run every frame; if we're pending aa change of secondary profession to use a tome, check and action.
+void InventoryManager::DrawPendingTomeUsage() {
+    if (tome_pending_stage == PendingTomeUseStage::None)
+        return;
+    constexpr const char* popup_label = "Change secondary profession?###change-secondary";
+    if (tome_pending_timeout && TIMER_INIT() > tome_pending_timeout) {
+        Log::Error("Timeout reached trying to change profession for tome use");
+        goto cancel;
+    }
+    if (tome_pending_stage == PendingTomeUseStage::PromptUser) {
+        const GW::AgentLiving* player = GW::Agents::GetPlayerAsAgentLiving();
+        if (player && (player->secondary == tome_pending_profession || player->primary == tome_pending_profession)) {
+            tome_pending_stage = PendingTomeUseStage::UseItem;
+            return;
+        }
+        const auto& d = ImGui::GetIO().DisplaySize;
+        ImGui::SetNextWindowPos({ d.x * .5f,d.y * .5f }, 0, ImVec2(0.5f, 0.5f));
+        ImGui::OpenPopup(popup_label);
+        tome_pending_stage = PendingTomeUseStage::AwaitPromptReply;
+    }
+    if (ImGui::BeginPopupModal(popup_label, nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::Text("Changing your secondary profession will change your skills and attributes.\nDo you want to continue?");
+        if (ImGui::Button("OK", ImVec2(120, 0)) || ImGui::IsKeyPressed(ImGuiKey_Enter)) {
+            tome_pending_stage = PendingTomeUseStage::ChangeProfession;
+            tome_pending_timeout = TIMER_INIT() + 3000;
+            ImGui::CloseCurrentPopup();
+        }
+        if (ImGui::IsWindowAppearing())
+            ImGui::SetFocusID(ImGui::GetItemID(), ImGui::GetCurrentWindow());
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel", ImVec2(120, 0))) {
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+        return;
+    }
+    if (tome_pending_stage == PendingTomeUseStage::AwaitPromptReply) {
+        // Popup not drawn; cancelled.
+        goto cancel;
+    }
+
+
+    switch (tome_pending_stage) {
+        case PendingTomeUseStage::ChangeProfession: {
+            const GW::AgentLiving* player = GW::Agents::GetPlayerAsAgentLiving();
+            if (player && player->secondary == tome_pending_profession) {
+                tome_pending_stage = PendingTomeUseStage::UseItem;
+                return;
+            }
+            auto* world = GW::WorldContext::instance();
+            if (!world) {
+                goto cancel;
+            }
+            GW::Array< GW::ProfessionState>& profession_unlocks_array = world->party_profession_states;
+            GW::ProfessionState* found = 0;
+            for (size_t i = 0; !found && profession_unlocks_array.valid() && i < profession_unlocks_array.size(); i++) {
+                if (profession_unlocks_array[i].agent_id == player->agent_id)
+                    found = &profession_unlocks_array[i];
+            }
+            if (!found) {
+                Log::Error("Player's profession info not found in world->party_profession_states");
+                goto cancel;
+            }
+            if (((found->unlocked_professions >> tome_pending_profession) & 1) != 1) {
+                // Skip to use item error; profession isn't unlocked
+                tome_pending_stage = PendingTomeUseStage::UseItem;
+                return;
+            }
+            GW::PlayerMgr::ChangeSecondProfession((GW::Constants::Profession)tome_pending_profession);
+            tome_pending_stage = PendingTomeUseStage::AwaitProfession;
+            return;
+        }
+
+
+
+        case PendingTomeUseStage::AwaitProfession: {
+            const GW::AgentLiving* player = GW::Agents::GetPlayerAsAgentLiving();
+            if (player && player->secondary == tome_pending_profession) {
+                tome_pending_stage = PendingTomeUseStage::UseItem;
+            }
+            return;
+        }
+        case PendingTomeUseStage::UseItem: {
+            GW::Item* item = GW::Items::GetItemById(tome_pending_item_id);
+            if (item) {
+                GW::Items::UseItem(item);
+            }
+            goto cancel;
+        }
+    }
+cancel:
+    tome_pending_stage = PendingTomeUseStage::None;
+    tome_pending_timeout = 0;
+    tome_pending_item_id = 0;
+    tome_pending_profession = 0;
 }
 
 bool InventoryManager::Item::IsWeaponSetItem()
 {
     if (!IsWeapon())
         return false;
-    GW::GameContext* g = GW::GameContext::instance();
-    if (!g || !g->items || !g->items->inventory)
+    GW::ItemContext* c = GW::ItemContext::instance();
+    if (c || !c->inventory)
         return false;
-    GW::WeapondSet *weapon_sets = g->items->inventory->weapon_sets;
+    GW::WeapondSet *weapon_sets = c->inventory->weapon_sets;
     for (size_t i = 0; i < 4; i++) {
         if (weapon_sets[i].offhand == this)
             return true;
@@ -1710,6 +2055,8 @@ bool InventoryManager::Item::CanOfferToTrade() {
 
 bool InventoryManager::Item::IsSalvagable()
 {
+    if (item_formula == 0x5da)
+        return false;
     if (IsUsable() || IsGreen())
         return false; // Non-salvagable flag set
     if (!bag)
@@ -1725,24 +2072,7 @@ bool InventoryManager::Item::IsSalvagable()
         case GW::Constants::ItemType::CC_Shards:
             return true;
         case GW::Constants::ItemType::Materials_Zcoins:
-            switch (model_id) {
-                case GW::Constants::ItemID::BoltofDamask:
-                case GW::Constants::ItemID::BoltofLinen:
-                case GW::Constants::ItemID::BoltofSilk:
-                case GW::Constants::ItemID::DeldrimorSteelIngot:
-                case GW::Constants::ItemID::ElonianLeatherSquare:
-                case GW::Constants::ItemID::LeatherSquare:
-                case GW::Constants::ItemID::LumpofCharcoal:
-                case GW::Constants::ItemID::RollofParchment:
-                case GW::Constants::ItemID::RollofVellum:
-                case GW::Constants::ItemID::SpiritwoodPlank:
-                case GW::Constants::ItemID::SteelIngot:
-                case GW::Constants::ItemID::TemperedGlassVial:
-                case GW::Constants::ItemID::VialofInk:
-                    return true;
-                default:
-                    break;
-            }
+            return is_material_salvageable != 0;
         default:
             break;
     }
@@ -1812,7 +2142,7 @@ bool InventoryManager::Item::IsIdentificationKit()
     GW::ItemModifier *mod = GetModifier(0x25E8);
     return mod && mod->arg1() == 1;
 }
-bool InventoryManager::Item::IsLesserKit() 
+bool InventoryManager::Item::IsLesserKit()
 {
     GW::ItemModifier *mod = GetModifier(0x25E8);
     return mod && mod->arg1() == 3;
@@ -1854,6 +2184,15 @@ bool InventoryManager::PendingItem::set(InventoryManager::Item *item)
     quantity = item->quantity;
     uses = item->GetUses();
     bag = static_cast<GW::Constants::Bag>(item->bag->index + 1);
+    name.reset(item->complete_name_enc ? item->complete_name_enc : item->name_enc);
+    // NB: This doesn't work for inscriptions; gww doesn't have a page per inscription.
+    wiki_name.reset(item->name_enc);
+    wiki_name.language(GW::Constants::TextLanguage::English);
+    wiki_name.wstring(); // Trigger decode; this isn't done any other time
+    wchar_t plural_item_name_wc[128];
+    swprintf(plural_item_name_wc, 128, L"\xa3d\x10a\xa35\x101\x200\x10a%s\x1\x1", item->name_enc);
+    plural_item_name.reset(plural_item_name_wc);
+    desc.reset(item->info_string);
     return true;
 }
 
@@ -1885,24 +2224,37 @@ InventoryManager::CtoS_QuoteItem InventoryManager::PendingTransaction::quote()
     }
     return q;
 }
-InventoryManager::CtoS_TransactItems InventoryManager::PendingTransaction::transact()
+InventoryManager::TransactItems InventoryManager::PendingTransaction::transact()
 {
-    CtoS_TransactItems q;
+    TransactItems q;
     q.type = type;
     if (selling()) {
         q.gold_recv = price;
         q.item_give_count = 1;
         q.item_give_ids[0] = item_id;
+        q.item_give_quantities[0] = 1;
     }
     else {
         q.gold_give = price;
         q.item_recv_count = 1;
         q.item_recv_ids[0] = item_id;
+        q.item_recv_quantities[0] = 1;
     }
     return q;
 }
 
 bool InventoryManager::PendingTransaction::selling()
 {
-    return type == GW::Merchant::TransactionType::MerchantSell || type == GW::Merchant::TransactionType::TraderSell;
+    return (GW::Merchant::TransactionType)type == GW::Merchant::TransactionType::MerchantSell
+        || (GW::Merchant::TransactionType)type == GW::Merchant::TransactionType::TraderSell;
+}
+
+void InventoryManager::PendingItem::PluralEncString::sanitise() {
+    if (sanitised)
+        return;
+    GuiUtils::EncString::sanitise();
+    if (sanitised) {
+        static const std::wregex plural(L"256 ");
+        decoded_ws = std::regex_replace(decoded_ws, plural, L"");
+    }
 }

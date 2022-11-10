@@ -1,18 +1,19 @@
 #include "stdafx.h"
 
 #include <GWCA/Constants/Constants.h>
-#include <GWCA/GameContainers/Array.h>
-
 #include <GWCA/Managers/AgentMgr.h>
 
 #include <Logger.h>
-#include <GuiUtils.h>
+#include <Utils/GuiUtils.h>
 #include <GWToolbox.h>
 
 #include <Modules/Resources.h>
 #include <Windows/DialogsWindow.h>
+#include <Modules/DialogModule.h>
+#include <GWCA/Managers/ChatMgr.h>
 
-static const char* const questnames[] = {
+namespace {
+    constexpr const char* const questnames[] = {
     "UW - Chamber",
     "UW - Wastes",
     "UW - UWG",
@@ -42,36 +43,49 @@ static const char* const questnames[] = {
     "DoA - Veil 2: Brood Wars",
     "DoA - Foundry 1: Foundry Of Failed Creations",
     "DoA - Foundry 2: Foundry Breakout"
-};
-static const char* const dialognames[] = {
-    "Craft fow armor",
-    "Prof Change - Warrior",
-    "Prof Change - Ranger",
-    "Prof Change - Monk",
-    "Prof Change - Necro",
-    "Prof Change - Mesmer",
-    "Prof Change - Elementalist",
-    "Prof Change - Assassin",
-    "Prof Change - Ritualist",
-    "Prof Change - Paragon",
-    "Prof Change - Dervish",
-    "Kama -> Docks @ Hahnna",
-    "Docks -> Kaineng @ Mhenlo",
-    "Docks -> LA Gate @ Mhenlo",
-    "LA Gate -> LA @ Neiro",
-    "Faction mission outpost",
-    "Nightfall mission outpost",
-};
+    };
+
+    std::map<const char*, std::vector<int>> dialogs_by_name = {
+        {"Craft fow armor",{GW::Constants::DialogID::FowCraftArmor}},
+        {"Prof Change - Warrior",{GW::Constants::DialogID::ProfChangeWarrior + 1, GW::Constants::DialogID::ProfChangeWarrior}},
+        {"Prof Change - Ranger",{GW::Constants::DialogID::ProfChangeRanger + 1, GW::Constants::DialogID::ProfChangeRanger}},
+        {"Prof Change - Monk",{GW::Constants::DialogID::ProfChangeMonk + 1, GW::Constants::DialogID::ProfChangeMonk}},
+        {"Prof Change - Necro",{GW::Constants::DialogID::ProfChangeNecro + 1, GW::Constants::DialogID::ProfChangeNecro}},
+        {"Prof Change - Mesmer",{GW::Constants::DialogID::ProfChangeMesmer + 1, GW::Constants::DialogID::ProfChangeMesmer}},
+        {"Prof Change - Elementalist",{GW::Constants::DialogID::ProfChangeEle + 1, GW::Constants::DialogID::ProfChangeEle}},
+        {"Prof Change - Assassin",{GW::Constants::DialogID::ProfChangeAssassin + 1, GW::Constants::DialogID::ProfChangeAssassin}},
+        {"Prof Change - Ritualist",{GW::Constants::DialogID::ProfChangeRitualist + 1, GW::Constants::DialogID::ProfChangeRitualist}},
+        {"Prof Change - Paragon",{GW::Constants::DialogID::ProfChangeParagon + 1, GW::Constants::DialogID::ProfChangeParagon}},
+        {"Prof Change - Dervish",{GW::Constants::DialogID::ProfChangeDervish + 1, GW::Constants::DialogID::ProfChangeDervish}},
+        {"Kama -> Docks @ Hahnna",{GW::Constants::DialogID::FerryKamadanToDocks}},
+        {"Docks -> Kaineng @ Mhenlo",{GW::Constants::DialogID::FerryDocksToKaineng}},
+        {"Docks -> LA Gate @ Mhenlo",{GW::Constants::DialogID::FerryDocksToLA}},
+        {"LA Gate -> LA @ Neiro",{GW::Constants::DialogID::FerryGateToLA}},
+        {"Faction mission outpost",{GW::Constants::DialogID::FactionMissionOutpost}},
+        {"Nightfall mission outpost",{GW::Constants::DialogID::NightfallMissionOutpost}}
+    };
+
+    void GoNPCSendDialogs(std::initializer_list<uint32_t> dialog_ids) {
+        if (!DialogModule::GetDialogAgent()) {
+            if (const auto target = GW::Agents::GetTarget()) {
+                GW::Agents::GoNPC(target);
+            }
+        }
+        DialogModule::SendDialogs(dialog_ids);
+    }
+}
+
 
 void DialogsWindow::Draw(IDirect3DDevice9* pDevice) {
     UNREFERENCED_PARAMETER(pDevice);
     if (!visible) return;
-    auto DialogButton = [](int x_idx, int x_qty, const char* text, const char* help, DWORD dialog) -> void {
+    auto DialogButton = [](int x_idx, int x_qty, const char* text, const char* help, uint32_t dialog_id) -> void {
         if (x_idx != 0) ImGui::SameLine(0, ImGui::GetStyle().ItemInnerSpacing.x);
-        float w = (ImGui::GetWindowContentRegionWidth()
-            - ImGui::GetStyle().ItemInnerSpacing.x * (x_qty - 1)) / x_qty;
+        float w = (ImGui::GetWindowContentRegionMax().x - ImGui::GetWindowContentRegionMin().x
+                   - ImGui::GetStyle().ItemInnerSpacing.x * (x_qty - 1)) / x_qty;
         if (ImGui::Button(text, ImVec2(w, 0))) {
-            GW::Agents::SendDialog(dialog);
+            GoNPCSendDialogs({dialog_id});
+
         }
         if (text != nullptr && ImGui::IsItemHovered()) {
             ImGui::SetTooltip(help);
@@ -83,10 +97,12 @@ void DialogsWindow::Draw(IDirect3DDevice9* pDevice) {
     if (ImGui::Begin(Name(), GetVisiblePtr(), GetWinFlags())) {
 
         if (show_common) {
-            DialogButton(0, 2, "Four Horseman", "Take quest in Planes", QuestAcceptDialog(GW::Constants::QuestID::UW::Planes));
-            DialogButton(1, 2, "Demon Assassin", "Take quest in Mountains", QuestAcceptDialog(GW::Constants::QuestID::UW::Mnt));
-            DialogButton(0, 2, "Tower of Strength", "Take quest", QuestAcceptDialog(GW::Constants::QuestID::Fow::Tos));
-            DialogButton(1, 2, "Foundry Reward", "Accept quest reward", QuestRewardDialog(GW::Constants::QuestID::Doa::FoundryBreakout));
+            DialogButton(
+                0, 2, "Four Horseman", "Take quest in Planes", QuestAcceptDialog(GW::Constants::QuestID::UW_Planes));
+            DialogButton(
+                1, 2, "Demon Assassin", "Take quest in Mountains", QuestAcceptDialog(GW::Constants::QuestID::UW_Mnt));
+            DialogButton(0, 2, "Tower of Strength", "Take quest", QuestAcceptDialog(GW::Constants::QuestID::Fow_Tos));
+            DialogButton(1, 2, "Foundry Reward", "Accept reward", QuestRewardDialog(GW::Constants::QuestID::Doa_FoundryBreakout));
             ImGui::Separator();
         }
         if (show_uwteles) {
@@ -94,60 +110,63 @@ void DialogsWindow::Draw(IDirect3DDevice9* pDevice) {
             DialogButton(1, 4, "Vale", "Teleport Vale", GW::Constants::DialogID::UwTeleVale);
             DialogButton(2, 4, "Pits", "Teleport Pits", GW::Constants::DialogID::UwTelePits);
             DialogButton(3, 4, "Pools", "Teleport Pools", GW::Constants::DialogID::UwTelePools);
-
             DialogButton(0, 3, "Planes", "Teleport Planes", GW::Constants::DialogID::UwTelePlanes);
             DialogButton(1, 3, "Wastes", "Teleport Wastes", GW::Constants::DialogID::UwTeleWastes);
-            DialogButton(2, 3, "Mountains", "Teleport Mountains\nThis is NOT the mountains quest", GW::Constants::DialogID::UwTeleMnt);
+            DialogButton(2, 3, "Mountains", "Teleport Mountains", GW::Constants::DialogID::UwTeleMnt);
             ImGui::Separator();
         }
-        const size_t n_quests = _countof(questnames);
+        constexpr size_t n_quests = _countof(questnames);
         if (show_favorites) {
-            for (int i = 0; i < fav_count; ++i) {
-                size_t index = static_cast<size_t>(i);
+            for (auto i = 0; i < fav_count; ++i) {
                 ImGui::PushID(i);
-                ImGui::PushItemWidth(-100.0f - ImGui::GetStyle().ItemInnerSpacing.x * 2);
-                ImGui::Combo("", &fav_index[index], questnames, n_quests);
+                ImGui::PushItemWidth(-60.0f - ImGui::GetStyle().ItemInnerSpacing.x);
+                ImGui::Combo("", &fav_index[i], questnames, n_quests);
                 ImGui::PopItemWidth();
                 ImGui::SameLine(0, ImGui::GetStyle().ItemInnerSpacing.x);
-                if (ImGui::Button("Take", ImVec2(40.0f, 0))) {
-                    GW::Agents::SendDialog(
-                        QuestAcceptDialog(IndexToQuestID(fav_index[index])));
-                }
-                ImGui::SameLine(0, ImGui::GetStyle().ItemInnerSpacing.x);
-                if (ImGui::Button("Reward", ImVec2(60.0f, 0))) {
-                    GW::Agents::SendDialog(
-                        QuestRewardDialog(IndexToDialogID(fav_index[index])));
+                if (ImGui::Button("Send", ImVec2(60.0f, 0))) {
+                    GoNPCSendDialogs({
+                        QuestAcceptDialog(IndexToQuestID(fav_index[i])),
+                        QuestRewardDialog(IndexToQuestID(fav_index[i]))
+                    });
                 }
                 ImGui::PopID();
             }
             ImGui::Separator();
         }
         if (show_custom) {
-            const int n_dialogs = _countof(dialognames);
             static int dialogindex = 0;
             ImGui::PushItemWidth(-60.0f - ImGui::GetStyle().ItemInnerSpacing.x);
-            ImGui::Combo("###dialogcombo", &dialogindex, dialognames, n_dialogs);
+            const auto current = std::next(dialogs_by_name.begin(), dialogindex);
+            if (ImGui::BeginCombo("###dialogcombo", current->first)) {
+                int offset = 0;
+                for (auto it = dialogs_by_name.begin(); it != dialogs_by_name.end(); it++) {
+                    if (ImGui::Selectable(it->first, it == current)) {
+                        dialogindex = offset;
+                        break;
+                    }
+                    offset++;
+                }
+                ImGui::EndCombo();
+            }
             ImGui::PopItemWidth();
             ImGui::SameLine(0, ImGui::GetStyle().ItemInnerSpacing.x);
             if (ImGui::Button("Send##1", ImVec2(60.0f, 0))) {
-                GW::Agents::SendDialog(IndexToDialogID(dialogindex));
+                for (const auto dialog_id : current->second) {
+                    DialogModule::SendDialog(dialog_id);
+                }
             }
 
             ImGui::PushItemWidth(-60.0f - ImGui::GetStyle().ItemInnerSpacing.x);
-            ImGui::InputText("###dialoginput", customdialogbuf, 64, ImGuiInputTextFlags_None);
+            ImGui::InputText("###dialoginput", customdialogbuf, _countof(customdialogbuf), ImGuiInputTextFlags_None);
             ImGui::PopItemWidth();
             if (ImGui::IsItemHovered()) {
                 ImGui::SetTooltip("You can prefix the number by \"0x\" to specify an hexadecimal number");
             }
             ImGui::SameLine(0, ImGui::GetStyle().ItemInnerSpacing.x);
             if (ImGui::Button("Send##2", ImVec2(60.0f, 0))) {
-                int iid;
-                if (GuiUtils::ParseInt(customdialogbuf, &iid) && (0 <= iid)) {
-                    uint32_t id = static_cast<uint32_t>(iid);
-                    GW::Agents::SendDialog(id);
-                } else {
-                    Log::Error("Invalid dialog number '%s'", customdialogbuf);
-                }
+                char buf[32];
+                ASSERT(snprintf(buf, _countof(buf), "dialog %s",customdialogbuf) != -1);
+                GW::Chat::SendChat('/', buf);
             }
         }
     }
@@ -164,9 +183,13 @@ void DialogsWindow::DrawSettingInternal() {
     }
     ImGui::PopItemWidth();
     ImGui::Text("Show:");
+    ImGui::StartSpacedElements(200.f * ImGui::FontScale());
     ImGui::Checkbox("Common 4", &show_common);
+    ImGui::NextSpacedElement();
     ImGui::Checkbox("UW Teles", &show_uwteles);
+    ImGui::NextSpacedElement();
     ImGui::Checkbox("Favorites", &show_favorites);
+    ImGui::NextSpacedElement();
     ImGui::Checkbox("Custom", &show_custom);
 }
 
@@ -182,10 +205,10 @@ void DialogsWindow::LoadSettings(CSimpleIni* ini) {
         snprintf(key, 32, "Quest%zu", i);
         fav_index[i] = ini->GetLongValue(Name(), key, 0);
     }
-    show_common = ini->GetBoolValue(Name(), VAR_NAME(show_common), true);
-    show_uwteles = ini->GetBoolValue(Name(), VAR_NAME(show_uwteles), true);
-    show_favorites = ini->GetBoolValue(Name(), VAR_NAME(show_favorites), true);
-    show_custom = ini->GetBoolValue(Name(), VAR_NAME(show_custom), true);
+    show_common = ini->GetBoolValue(Name(), VAR_NAME(show_common), show_common);
+    show_uwteles = ini->GetBoolValue(Name(), VAR_NAME(show_uwteles), show_uwteles);
+    show_favorites = ini->GetBoolValue(Name(), VAR_NAME(show_favorites), show_favorites);
+    show_custom = ini->GetBoolValue(Name(), VAR_NAME(show_custom), show_custom);
 }
 
 void DialogsWindow::SaveSettings(CSimpleIni* ini) {
@@ -203,42 +226,42 @@ void DialogsWindow::SaveSettings(CSimpleIni* ini) {
     ini->SetBoolValue(Name(), VAR_NAME(show_custom), show_custom);
 }
 
-DWORD DialogsWindow::IndexToQuestID(int index) {
+GW::Constants::QuestID DialogsWindow::IndexToQuestID(const int index) {
     switch (index) {
-    case 0: return GW::Constants::QuestID::UW::Chamber;
-    case 1: return GW::Constants::QuestID::UW::Wastes;
-    case 2: return GW::Constants::QuestID::UW::UWG;
-    case 3: return GW::Constants::QuestID::UW::Mnt;
-    case 4: return GW::Constants::QuestID::UW::Pits;
-    case 5: return GW::Constants::QuestID::UW::Planes;
-    case 6: return GW::Constants::QuestID::UW::Pools;
-    case 7: return GW::Constants::QuestID::UW::Escort;
-    case 8: return GW::Constants::QuestID::UW::Restore;
-    case 9: return GW::Constants::QuestID::UW::Vale;
-    case 10: return GW::Constants::QuestID::Fow::Defend;
-    case 11: return GW::Constants::QuestID::Fow::ArmyOfDarknesses;
-    case 12: return GW::Constants::QuestID::Fow::WailingLord;
-    case 13: return GW::Constants::QuestID::Fow::Griffons;
-    case 14: return GW::Constants::QuestID::Fow::Slaves;
-    case 15: return GW::Constants::QuestID::Fow::Restore;
-    case 16: return GW::Constants::QuestID::Fow::Hunt;
-    case 17: return GW::Constants::QuestID::Fow::Forgemaster;
-    case 18: return GW::Constants::QuestID::Fow::Tos;
-    case 19: return GW::Constants::QuestID::Fow::Toc;
-    case 20: return GW::Constants::QuestID::Fow::Khobay;
-    case 21: return GW::Constants::QuestID::Doa::DeathbringerCompany;
-    case 22: return GW::Constants::QuestID::Doa::RiftBetweenUs;
-    case 23: return GW::Constants::QuestID::Doa::ToTheRescue;
-    case 24: return GW::Constants::QuestID::Doa::City;
-    case 25: return GW::Constants::QuestID::Doa::BreachingStygianVeil;
-    case 26: return GW::Constants::QuestID::Doa::BroodWars;
-    case 27: return GW::Constants::QuestID::Doa::FoundryOfFailedCreations;
-    case 28: return GW::Constants::QuestID::Doa::FoundryBreakout;
-    default: return 0;
+    case 0: return GW::Constants::QuestID::UW_Chamber;
+    case 1: return GW::Constants::QuestID::UW_Wastes;
+    case 2: return GW::Constants::QuestID::UW_UWG;
+    case 3: return GW::Constants::QuestID::UW_Mnt;
+    case 4: return GW::Constants::QuestID::UW_Pits;
+    case 5: return GW::Constants::QuestID::UW_Planes;
+    case 6: return GW::Constants::QuestID::UW_Pools;
+    case 7: return GW::Constants::QuestID::UW_Escort;
+    case 8: return GW::Constants::QuestID::UW_Restore;
+    case 9: return GW::Constants::QuestID::UW_Vale;
+    case 10: return GW::Constants::QuestID::Fow_Defend;
+    case 11: return GW::Constants::QuestID::Fow_ArmyOfDarknesses;
+    case 12: return GW::Constants::QuestID::Fow_WailingLord;
+    case 13: return GW::Constants::QuestID::Fow_Griffons;
+    case 14: return GW::Constants::QuestID::Fow_Slaves;
+    case 15: return GW::Constants::QuestID::Fow_Restore;
+    case 16: return GW::Constants::QuestID::Fow_Hunt;
+    case 17: return GW::Constants::QuestID::Fow_Forgemaster;
+    case 18: return GW::Constants::QuestID::Fow_Tos;
+    case 19: return GW::Constants::QuestID::Fow_Toc;
+    case 20: return GW::Constants::QuestID::Fow_Khobay;
+    case 21: return GW::Constants::QuestID::Doa_DeathbringerCompany;
+    case 22: return GW::Constants::QuestID::Doa_RiftBetweenUs;
+    case 23: return GW::Constants::QuestID::Doa_ToTheRescue;
+    case 24: return GW::Constants::QuestID::Doa_City;
+    case 25: return GW::Constants::QuestID::Doa_BreachingStygianVeil;
+    case 26: return GW::Constants::QuestID::Doa_BroodWars;
+    case 27: return GW::Constants::QuestID::Doa_FoundryOfFailedCreations;
+    case 28: return GW::Constants::QuestID::Doa_FoundryBreakout;
+    default: return GW::Constants::QuestID::None;
     }
 }
 
-DWORD DialogsWindow::IndexToDialogID(int index) {
+uint32_t DialogsWindow::IndexToDialogID(const int index) {
     switch (index) {
     case 0: return GW::Constants::DialogID::FowCraftArmor;
     case 1: return GW::Constants::DialogID::ProfChangeWarrior;

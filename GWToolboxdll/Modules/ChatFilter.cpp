@@ -1,5 +1,7 @@
 #include "stdafx.h"
 
+#include <GWCA/Packets/StoC.h>
+
 #include <GWCA/GameContainers/Array.h>
 #include <GWCA/GameContainers/GamePos.h>
 
@@ -9,6 +11,7 @@
 #include <GWCA/Context/GameContext.h>
 #include <GWCA/Context/WorldContext.h>
 
+#include <GWCA/Managers/FriendListMgr.h>
 #include <GWCA/Managers/MapMgr.h>
 #include <GWCA/Managers/ChatMgr.h>
 #include <GWCA/Managers/StoCMgr.h>
@@ -21,6 +24,8 @@
 
 #include <Modules/Resources.h>
 #include <Modules/ChatFilter.h>
+#include <GWCA/GameEntities/Friendslist.h>
+#include <Utils/ToolboxUtils.h>
 
 //#define PRINT_CHAT_PACKETS
 
@@ -29,7 +34,7 @@
 
 static bool IsInChallengeMission() {
     GW::AreaInfo* a = GW::Map::GetCurrentMapInfo();
-    return a && a->type == GW::RegionType_Challenge;
+    return a && a->type == GW::RegionType::Challenge;
 }
 
 static void printchar(wchar_t c) {
@@ -40,61 +45,59 @@ static void printchar(wchar_t c) {
     }
 }
 
-static wchar_t* GetMessageCore() {
-    GW::Array<wchar_t>* buff = &GW::GameContext::instance()->world->message_buff;
-    return buff ? buff->begin() : nullptr;
-}
-// Due to the way ChatFilter works, if a previous message was blocked then the buffer would still contain the last message.
-// Clear down the message buffer if the packet has been blocked.
-static void ClearMessageBufferIfBlocked(GW::HookStatus* status, GW::Packet::StoC::PacketBase*) {
-    if (!status->blocked)
-        return;
-    GW::Array<wchar_t>* buff = &GW::GameContext::instance()->world->message_buff;
-    if (!buff || !buff->valid()) {
-        Log::Log("Failed to clear message buffer!\n");
-        return;
-    }
-    buff->clear();
-}
 void ChatFilter::Initialize() {
     ToolboxModule::Initialize();
 
-    // server messages
-    GW::StoC::RegisterPacketCallback<GW::Packet::StoC::MessageServer>(&BlockIfApplicable_Entry,
-    [this](GW::HookStatus *status, GW::Packet::StoC::MessageServer *pak) -> void {
-        BlockIfApplicable(status, GetMessageCore(), pak->channel);
-    });
-    
+    GW::StoC::RegisterPacketCallback(&BlockIfApplicable_Entry, GAME_SMSG_CHAT_MESSAGE_SERVER, BlockIfApplicable);
+    GW::StoC::RegisterPacketCallback(&BlockIfApplicable_Entry, GAME_SMSG_CHAT_MESSAGE_GLOBAL, BlockIfApplicable);
+    GW::StoC::RegisterPacketCallback(&BlockIfApplicable_Entry, GAME_SMSG_CHAT_MESSAGE_LOCAL, BlockIfApplicable);
 
-    // global messages
-    GW::StoC::RegisterPacketCallback<GW::Packet::StoC::MessageGlobal>(&BlockIfApplicable_Entry,
-    [this](GW::HookStatus *status, GW::Packet::StoC::MessageGlobal* pak) -> void {
-        BlockIfApplicable(status, GetMessageCore(), pak->channel);
-    });
-    
-    // local messages
-    GW::StoC::RegisterPacketCallback<GW::Packet::StoC::MessageLocal>(&BlockIfApplicable_Entry,
-    [this](GW::HookStatus *status, GW::Packet::StoC::MessageLocal *pak) -> void {
-        BlockIfApplicable(status, GetMessageCore(), pak->channel);
-    });
+    GW::StoC::RegisterPostPacketCallback(&ClearIfApplicable_Entry, GAME_SMSG_CHAT_MESSAGE_SERVER, ClearMessageBufferIfBlocked);
+    GW::StoC::RegisterPostPacketCallback(&ClearIfApplicable_Entry, GAME_SMSG_CHAT_MESSAGE_GLOBAL, ClearMessageBufferIfBlocked);
+    GW::StoC::RegisterPostPacketCallback(&ClearIfApplicable_Entry, GAME_SMSG_CHAT_MESSAGE_LOCAL, ClearMessageBufferIfBlocked);
 
-    GW::StoC::RegisterPostPacketCallback< GW::Packet::StoC::MessageServer>(&ClearIfApplicable_Entry, ClearMessageBufferIfBlocked);
-    GW::StoC::RegisterPostPacketCallback< GW::Packet::StoC::MessageGlobal>(&ClearIfApplicable_Entry, ClearMessageBufferIfBlocked);
-    GW::StoC::RegisterPostPacketCallback< GW::Packet::StoC::MessageLocal>(&ClearIfApplicable_Entry, ClearMessageBufferIfBlocked);
-
-    GW::Chat::RegisterLocalMessageCallback(&BlockIfApplicable_Entry,
-    [this](GW::HookStatus *status, int channel, wchar_t *message) -> void {
-        BlockIfApplicable(status, message, static_cast<uint32_t>(channel));
-    });
+    GW::Chat::RegisterLocalMessageCallback(&BlockIfApplicable_Entry, [](GW::HookStatus* status, int channel, wchar_t* message) {
+        if (Instance().ShouldIgnore(message, static_cast<uint32_t>(channel))) {
+            status->blocked = true;
+        }
+        });
 }
-void ChatFilter::BlockIfApplicable(GW::HookStatus* status, const wchar_t* message, uint32_t channel) {
-    if (message && ShouldIgnore(message, channel)) {
-        /*Log::Log("ChatFilter Blocked:\n");
-        for (size_t i = 0; message[i]; i++)
-            printchar(message[i]);
-        printf("\n");*/
+void ChatFilter::BlockIfApplicable(GW::HookStatus* status, GW::Packet::StoC::PacketBase* packet) {
+    if (status->blocked)
+        return;
+    uint32_t channel = 0;
+    const wchar_t* message = nullptr;
+    switch (packet->header) {
+        case GAME_SMSG_CHAT_MESSAGE_GLOBAL: {
+            auto p = (GW::Packet::StoC::MessageGlobal*)packet;
+            channel = p->channel;
+            message = ToolboxUtils::GetMessageCore();
+        } break;
+        case GAME_SMSG_CHAT_MESSAGE_SERVER: {
+            auto p = (GW::Packet::StoC::MessageServer*)packet;
+            channel = p->channel;
+            message = ToolboxUtils::GetMessageCore();
+        } break;
+        case GAME_SMSG_CHAT_MESSAGE_LOCAL: {
+            auto p = (GW::Packet::StoC::MessageLocal*)packet;
+            channel = p->channel;
+            message = ToolboxUtils::GetMessageCore();
+        } break;
+        default:
+            return;
+    }
+    if (Instance().ShouldIgnore(message, channel)) {
+        // Message channel is hidden, or message content is blocked
         status->blocked = true;
     }
+    else if (Instance().ShouldIgnoreBySender(ToolboxUtils::GetSenderFromPacket(packet))) {
+        // Sender is in player's ignore list
+        status->blocked = true;
+    }
+}
+void ChatFilter::ClearMessageBufferIfBlocked(GW::HookStatus* status, GW::Packet::StoC::PacketBase*) {
+    if (status->blocked)
+        ToolboxUtils::ClearMessageCore();
 }
 
 void ChatFilter::LoadSettings(CSimpleIni* ini) {
@@ -121,6 +124,7 @@ void ChatFilter::LoadSettings(CSimpleIni* ini) {
     LOAD_BOOL(favor);
     LOAD_BOOL(ninerings);
     LOAD_BOOL(noonehearsyou);
+    LOAD_BOOL(away);
     LOAD_BOOL(lunars);
     LOAD_BOOL(messagebycontent);
     LOAD_BOOL(you_have_been_playing_for);
@@ -142,7 +146,7 @@ void ChatFilter::LoadSettings(CSimpleIni* ini) {
     LOAD_BOOL(filter_channel_emotes);
 
     LOAD_BOOL(block_messages_from_inactive_channels);
-    
+
     strcpy_s(bycontent_word_buf, "");
     strcpy_s(bycontent_regex_buf, "");
 
@@ -200,6 +204,7 @@ void ChatFilter::SaveSettings(CSimpleIni* ini) {
     SAVE_BOOL(favor);
     SAVE_BOOL(ninerings);
     SAVE_BOOL(noonehearsyou);
+    SAVE_BOOL(away);
     SAVE_BOOL(lunars);
     SAVE_BOOL(messagebycontent);
     SAVE_BOOL(you_have_been_playing_for);
@@ -295,7 +300,7 @@ bool ChatFilter::ShouldIgnoreByAgentThatDropped(const wchar_t* agent_segment) co
 bool ChatFilter::IsRare(const wchar_t* item_segment) const {
     if (item_segment == nullptr) return false;      // something went wrong, don't ignore
     if (item_segment[0] == 0xA40) return true;      // don't ignore gold items
-    if (FullMatch(item_segment, { 0x108, 0x10A, 0x22D9, 0xE7B8, 0xE9DD, 0x2322 })) 
+    if (FullMatch(item_segment, { 0x108, 0x10A, 0x22D9, 0xE7B8, 0xE9DD, 0x2322 }))
         return true;    // don't ignore ectos
     if (FullMatch(item_segment, { 0x108, 0x10A, 0x22EA, 0xFDA9, 0xDE53, 0x2D16 } ))
         return true; // don't ignore obby shards
@@ -430,7 +435,7 @@ bool ChatFilter::ShouldIgnore(const wchar_t *message) {
         case 0x186C: // you win 15 festival tickets
         case 0x186D: // did not win 9rings
             // rings of fortune
-        case 0x1526: // The rings of fortune did not favor you this time. Stay in the area to try again. 
+        case 0x1526: // The rings of fortune did not favor you this time. Stay in the area to try again.
         case 0x1529: // Pan takes 2 festival tickets
         case 0x152A: // stay right were you are! rings of fortune is about to begin!
         case 0x152B: // you win 12 festival tickets
@@ -462,7 +467,7 @@ bool ChatFilter::ShouldIgnore(const wchar_t *message) {
         case 0x4650: return pvp_messages; // skill has been updated for pvp
         case 0x4651: return pvp_messages; // a hero skill has been updated for pvp
         case 0x223F: return false; // "x minutes of favor of the gods remaining" as a result of /favor command
-        case 0x223B: return hoh_messages; // a party won hall of heroes  
+        case 0x223B: return hoh_messages; // a party won hall of heroes
         case 0x23E2: return player_has_achieved_title; // Player has achieved... The gods have blessed the world with their favor.
         case 0x23E3: return favor; // The gods have blessed the world
         case 0x23E4: return favor; // 0xF8AA 0x95CD 0x2766 // the world no longer has the favor of the gods
@@ -553,80 +558,68 @@ bool ChatFilter::ShouldFilterByChannel(uint32_t channel) {
 bool ChatFilter::ShouldBlockByChannel(uint32_t channel) {
     if (Instance().block_messages_from_inactive_channels) {
         // Don't log chat messages if the channel is turned off - avoids hitting the chat log limit
-        GW::UI::CheckboxPreference prefCheck = GW::UI::CheckboxPreference_Count;
+        GW::UI::FlagPreference prefCheck = (GW::UI::FlagPreference)0xffff;
         switch (static_cast<GW::Chat::Channel>(channel)) {
         case GW::Chat::Channel::CHANNEL_ALL:
-            prefCheck = GW::UI::CheckboxPreference_ChannelLocal;
+            prefCheck = GW::UI::FlagPreference::ChannelLocal;
             break;
         case GW::Chat::Channel::CHANNEL_GROUP:
         case GW::Chat::Channel::CHANNEL_ALLIES:
-            prefCheck = GW::UI::CheckboxPreference_ChannelGroup;
+            prefCheck = GW::UI::FlagPreference::ChannelGroup;
             break;
         case GW::Chat::Channel::CHANNEL_EMOTE:
-            prefCheck = GW::UI::CheckboxPreference_ChannelEmotes;
+            prefCheck = GW::UI::FlagPreference::ChannelEmotes;
             break;
         case GW::Chat::Channel::CHANNEL_GUILD:
-            prefCheck = GW::UI::CheckboxPreference_ChannelGuild;
+            prefCheck = GW::UI::FlagPreference::ChannelGuild;
             break;
         case GW::Chat::Channel::CHANNEL_ALLIANCE:
-            prefCheck = GW::UI::CheckboxPreference_ChannelAlliance;
+            prefCheck = GW::UI::FlagPreference::ChannelAlliance;
             break;
         case GW::Chat::Channel::CHANNEL_TRADE:
-            prefCheck = GW::UI::CheckboxPreference_ChannelTrade;
+            prefCheck = GW::UI::FlagPreference::ChannelTrade;
             break;
         }
-        if(prefCheck != GW::UI::CheckboxPreference_Count
-            && GW::UI::GetCheckboxPreference(prefCheck) == 1) {
+        if(prefCheck != (GW::UI::FlagPreference)0xffff
+            && GW::UI::GetPreference(prefCheck) == 1) {
             return true;
         }
     }
     return false;
 }
-bool ChatFilter::ShouldIgnoreBySender(const wchar_t *sender, size_t size) {
-    UNREFERENCED_PARAMETER(sender);
-    UNREFERENCED_PARAMETER(size);
-#ifdef EXTENDED_IGNORE_LIST
-    if (sender == nullptr) return false;
-    char s[32];
-    for (size_t i = 0; i < size; i++) {
-        if (sender[i] & ~0xff) return false; // We currently don't support non-ascii names
-        s[i] = tolower(sender[i]);
-        if (sender[i] == 0)
-            break;
-    }
-    if (byauthor_words.find(s) != byauthor_words.end())
-        return true;
-#endif
-    return false;
+bool ChatFilter::ShouldIgnoreBySender(const std::wstring& sender) {
+    return GW::FriendListMgr::GetFriend(nullptr, sender.c_str(), GW::FriendType::Ignore) != nullptr;
 }
 
 void ChatFilter::DrawSettingInternal() {
-    const float half_width = ImGui::GetContentRegionAvail().x / 2;
     ImGui::Text("Block the following messages:");
     ImGui::Separator();
     ImGui::Text("Drops");
     ImGui::SameLine();
     ImGui::TextDisabled("('Rare' stands for Gold item, Ecto, Obby shard or Lockpick)");
-    ImGui::Checkbox("A rare item drops for you", &self_drop_rare);
-    ImGui::SameLine(half_width); ImGui::Checkbox("A common item drops for you", &self_drop_common);
-    ImGui::Checkbox("A rare item drops for an ally", &ally_drop_rare);
-    ImGui::SameLine(half_width); ImGui::Checkbox("A common item drops for an ally", &ally_drop_common);
-    ImGui::Checkbox("An ally picks up a rare item", &ally_pickup_rare);
-    ImGui::SameLine(half_width); ImGui::Checkbox("An ally picks up a common item", &ally_pickup_common);
-    ImGui::Checkbox("You pick up a rare item", &player_pickup_rare);
-    ImGui::SameLine(half_width); ImGui::Checkbox("You pick up a common item", &player_pickup_common);
+    ImGui::StartSpacedElements(350.f * ImGui::FontScale());
+    ImGui::NextSpacedElement(); ImGui::Checkbox("A rare item drops for you", &self_drop_rare);
+    ImGui::NextSpacedElement(); ImGui::Checkbox("A common item drops for you", &self_drop_common);
+    ImGui::NextSpacedElement(); ImGui::Checkbox("A rare item drops for an ally", &ally_drop_rare);
+    ImGui::NextSpacedElement(); ImGui::Checkbox("A common item drops for an ally", &ally_drop_common);
+    ImGui::NextSpacedElement(); ImGui::Checkbox("An ally picks up a rare item", &ally_pickup_rare);
+    ImGui::NextSpacedElement(); ImGui::Checkbox("An ally picks up a common item", &ally_pickup_common);
+    ImGui::NextSpacedElement(); ImGui::Checkbox("You pick up a rare item", &player_pickup_rare);
+    ImGui::NextSpacedElement(); ImGui::Checkbox("You pick up a common item", &player_pickup_common);
 
     ImGui::Separator();
     ImGui::Text("Announcements");
-    ImGui::Checkbox("Guild Announcement", &guild_announcement);
-    ImGui::SameLine(half_width); ImGui::Checkbox("Hall of Heroes winners", &hoh_messages);
-    ImGui::Checkbox("Favor of the Gods announcements", &favor);
-    ImGui::SameLine(half_width); ImGui::Checkbox("'You have been playing for...'", &you_have_been_playing_for);
-    ImGui::Checkbox("'Player x has achieved title...'", &player_has_achieved_title);
-    ImGui::SameLine(half_width); ImGui::Checkbox("'You gain x faction'", &faction_gain);
+    ImGui::StartSpacedElements(350.f * ImGui::FontScale());
+    ImGui::NextSpacedElement(); ImGui::Checkbox("Guild Announcement", &guild_announcement);
+    ImGui::NextSpacedElement(); ImGui::Checkbox("Hall of Heroes winners", &hoh_messages);
+    ImGui::NextSpacedElement(); ImGui::Checkbox("Favor of the Gods announcements", &favor);
+    ImGui::NextSpacedElement(); ImGui::Checkbox("'You have been playing for...'", &you_have_been_playing_for);
+    ImGui::NextSpacedElement(); ImGui::Checkbox("'Player x has achieved title...'", &player_has_achieved_title);
+    ImGui::NextSpacedElement(); ImGui::Checkbox("'You gain x faction'", &faction_gain);
     ImGui::Separator();
     ImGui::Text("Warnings");
-    ImGui::Checkbox("Unable to use item", &item_cannot_be_used);
+    ImGui::StartSpacedElements(350.f * ImGui::FontScale());
+    ImGui::NextSpacedElement(); ImGui::Checkbox("Unable to use item", &item_cannot_be_used);
     ImGui::ShowHelp("'Item can only/cannot be used in towns or outposts.'\n\
 'This item cannot be used here.'\n\
 'Cannot use this item when no party members are dead.'\n\
@@ -635,34 +628,36 @@ void ChatFilter::DrawSettingInternal() {
 'That item has no uses remaining.'\n\
 'You must wait before using another tonic.'\n\
 'This item can only be used in a guild hall'");
-    ImGui::SameLine(half_width); ImGui::Checkbox("Invalid target", &invalid_target);
+    ImGui::NextSpacedElement(); ImGui::Checkbox("Invalid target", &invalid_target);
     ImGui::ShowHelp("'Invalid spell/attack target.'\n\
 'Spell failed. Spirits are not affected by this spell.'\n\
 'Your view of the target is obstructed.'\n\
 'That skill requires a different weapon type.'\n\
 'Target is out of range.'\n\
 'Target is immune to bleeding/disease/poison (no flesh.)'");
-    ImGui::Checkbox("'Inventory is full'", &inventory_is_full);
-    ImGui::SameLine(half_width); ImGui::Checkbox("Opening chests", &opening_chest_messages);
+    ImGui::NextSpacedElement(); ImGui::Checkbox("'Inventory is full'", &inventory_is_full);
+    ImGui::NextSpacedElement(); ImGui::Checkbox("Opening chests", &opening_chest_messages);
     ImGui::ShowHelp("'Chest is being used'\n\
 'The chest is locked. You must use a lockpick to open it.'\n\
 'The chest is locked. You must have the correct key or a lockpick.'\n\
 'The chest is empty.'");
-    ImGui::Checkbox("Item already identified", &item_already_identified);
-    ImGui::SameLine(half_width); ImGui::Checkbox("Not enough Adrenaline/Energy", &not_enough_energy);
+    ImGui::NextSpacedElement(); ImGui::Checkbox("Item already identified", &item_already_identified);
+    ImGui::NextSpacedElement(); ImGui::Checkbox("Not enough Adrenaline/Energy", &not_enough_energy);
 
     ImGui::Separator();
     ImGui::Text("Others");
-    ImGui::Checkbox("Earning skill points", &skill_points);
-    ImGui::SameLine(half_width); ImGui::Checkbox("PvP messages", &pvp_messages);
+    ImGui::StartSpacedElements(350.f * ImGui::FontScale());
+    ImGui::NextSpacedElement(); ImGui::Checkbox("Earning skill points", &skill_points);
+    ImGui::NextSpacedElement(); ImGui::Checkbox("PvP messages", &pvp_messages);
     ImGui::ShowHelp("Such as 'A skill was updated for pvp!'");
-    ImGui::Checkbox("9 Rings messages", &ninerings);
-    ImGui::SameLine(half_width); ImGui::Checkbox("Lunar fortunes messages", &lunars);
-    ImGui::Checkbox("Challenge mission messages", &challenge_mission_messages);
+    ImGui::NextSpacedElement(); ImGui::Checkbox("9 Rings messages", &ninerings);
+    ImGui::NextSpacedElement(); ImGui::Checkbox("Lunar fortunes messages", &lunars);
+    ImGui::NextSpacedElement(); ImGui::Checkbox("Challenge mission messages", &challenge_mission_messages);
     ImGui::ShowHelp("Such as 'Hold-out bonus: +2 points'");
-    ImGui::SameLine(half_width); ImGui::Checkbox("'No one hears you...'", &noonehearsyou);
-    ImGui::Checkbox("'Player x might not reply because his/her status is set to away'", &away);
-    ImGui::SameLine(half_width); ImGui::Checkbox("Salvaging messages", &salvage_messages);
+    ImGui::NextSpacedElement(); ImGui::Checkbox("'No one hears you...'", &noonehearsyou);
+    ImGui::NextSpacedElement(); ImGui::Checkbox("'Player x might not reply...", &away);
+    ImGui::ShowHelp("...because his / her status is set to away'");
+    ImGui::NextSpacedElement(); ImGui::Checkbox("Salvaging messages", &salvage_messages);
 
     ImGui::Separator();
     ImGui::Checkbox("Block messages from inactive chat channels", &block_messages_from_inactive_channels);
@@ -684,8 +679,8 @@ void ChatFilter::DrawSettingInternal() {
     ImGui::Checkbox("Alliance", &filter_channel_alliance);
     ImGui::SameLine(0.0f, -1.0f);
     ImGui::Checkbox("Emotes", &filter_channel_emotes);
-    
-    if (ImGui::InputTextMultiline("##bycontentfilter", bycontent_word_buf, 
+
+    if (ImGui::InputTextMultiline("##bycontentfilter", bycontent_word_buf,
         FILTER_BUF_SIZE, ImVec2(-1.0f, 0.0f))) {
         timer_parse_filters = GetTickCount() + NOISE_REDUCTION_DELAY_MS;
     }
@@ -759,7 +754,7 @@ void ChatFilter::ParseBuffer(const char *text, std::vector<std::regex> &regex) c
     std::string word;
     while (std::getline(stream, word)) {
         if (!word.empty()) {
-            // std::transform(word.begin(), word.end(), word.begin(), ::tolower);
+            // std::ranges::transform(word, word.begin(), ::tolower);
             try {
                 regex.push_back(std::regex(word));
             } catch (const std::regex_error&) {

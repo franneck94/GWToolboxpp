@@ -20,8 +20,14 @@ each list of objectives can be either sequential or independent
 */
 
 class ObjectiveTimerWindow : public ToolboxWindow {
-    ObjectiveTimerWindow() {};
-    ~ObjectiveTimerWindow();
+    ObjectiveTimerWindow() = default;
+    ~ObjectiveTimerWindow() {
+        if (run_loader.joinable()) {
+            run_loader.join();
+        }
+        ClearObjectiveSets();
+    }
+
 public:
     static ObjectiveTimerWindow& Instance() {
         static ObjectiveTimerWindow instance;
@@ -29,7 +35,7 @@ public:
     }
 
     const char* Name() const override { return "Objectives"; }
-    const char* Icon() const override { return ICON_FA_BULLSEYE; }
+    const char8_t* Icon() const override { return ICON_FA_BULLSEYE; }
 
     void Initialize() override;
 
@@ -45,6 +51,13 @@ public:
 private:
     std::thread run_loader;
     bool loading = false;
+
+    bool map_load_pending = false;
+    GW::Packet::StoC::InstanceLoadInfo* InstanceLoadInfo = 0;
+    GW::Packet::StoC::InstanceLoadFile* InstanceLoadFile = 0;
+    GW::Packet::StoC::InstanceTimer* InstanceTimer = 0;
+    // Checks that we've received all of the packets needed to start an objective set, then triggers necessary events
+    void CheckIsMapLoaded();
 
     // TODO: many of those are not hooked up
     enum class EventType {
@@ -66,12 +79,16 @@ private:
         DungeonReward
     };
 
+    class ObjectiveSet;
+
     class Objective
     {
     public:
         char name[126] = "";
         int indent = 0;
         int starting_completes_n_previous_objectives = 0; // use -1 for all
+
+        ObjectiveSet* parent;
 
         struct Event {
             EventType type;
@@ -84,7 +101,9 @@ private:
 
         DWORD    start = 0;
         DWORD    done = 0;
-        
+        DWORD start_time_point = 0;
+        DWORD done_time_point = 0;
+
         enum class Status {
             NotStarted,
             Started,
@@ -95,7 +114,7 @@ private:
         const char* GetEndTimeStr();
         const char* GetDurationStr();
         DWORD GetDuration();
-       
+
         Objective(const char* name);
 
         Objective* AddStartEvent(EventType et, uint32_t id1 = 0, uint32_t id2 = 0);
@@ -125,7 +144,8 @@ private:
         ~ObjectiveSet();
 
         DWORD system_time;
-        DWORD instance_time = (DWORD)-1;
+        // Time point that this objective set was created in ms (i.e. run started)
+        DWORD run_start_time_point = 0;
         DWORD duration = (DWORD)-1;
         DWORD GetDuration();
         const char* GetDurationStr();
@@ -139,9 +159,10 @@ private:
 
         std::vector<Objective*> objectives;
 
-        Objective* AddObjective(Objective* obj, int starting_completes_num_previous = 0) { 
+        Objective* AddObjective(Objective* obj, int starting_completes_num_previous = 0) {
             obj->starting_completes_n_previous_objectives = starting_completes_num_previous;
-            objectives.push_back(obj); 
+            obj->parent = this;
+            objectives.push_back(obj);
             return objectives.back();
         }
         Objective* AddObjectiveAfter(Objective* obj) {
@@ -165,14 +186,14 @@ private:
         nlohmann::json ToJson();
         void Update();
         void GetStartTime(struct tm* timeinfo);
-        
+
         const unsigned int ui_id = 0; // an internal id to ensure interface consistency
 
     private:
         static unsigned int cur_ui_id;
         char cached_start[16] = { 0 };
         char cached_time[16] = { 0 };
-        
+
     };
 
     std::map<DWORD, ObjectiveSet*> objective_sets;

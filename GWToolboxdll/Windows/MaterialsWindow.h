@@ -1,12 +1,13 @@
 #pragma once
 
 #include <GWCA/Utilities/Hook.h>
-#include <GWCA/GameEntities/Item.h>
-#include <GWCA/Managers/MerchantMgr.h>
 
 #include <ToolboxWindow.h>
 
 class MaterialsWindow : public ToolboxWindow {
+    MaterialsWindow() = default;
+    ~MaterialsWindow() = default;
+
     enum Item {
         Essence,
         Grail,
@@ -30,12 +31,10 @@ class MaterialsWindow : public ToolboxWindow {
         RollofParchment, RollofVellum, Ruby,
         Sapphire, SpiritwoodPlank, SteelIngot,
         TemperedGlassVial, VialofInk,
-        
+
         N_MATS
     };
 
-    MaterialsWindow() {};
-    ~MaterialsWindow(){};
 public:
     static MaterialsWindow& Instance() {
         static MaterialsWindow instance;
@@ -43,7 +42,7 @@ public:
     }
 
     const char* Name() const override { return "Materials"; }
-    const char* Icon() const override { return ICON_FA_FEATHER_ALT; }
+    const char8_t* Icon() const override { return ICON_FA_FEATHER_ALT; }
 
     void Initialize() override;
     void Terminate() override;
@@ -53,7 +52,7 @@ public:
     void SaveSettings(CSimpleIni* ini) override;
 
     bool GetIsInProgress();
-    
+
     // Update. Will always be called every frame.
     void Update(float delta) override;
 
@@ -72,11 +71,11 @@ private:
     DWORD RequestPurchaseQuote(Material material);
     DWORD RequestSellQuote(Material material);
 
-    IDirect3DTexture9* tex_essence = nullptr;
-    IDirect3DTexture9* tex_grail = nullptr;
-    IDirect3DTexture9* tex_armor = nullptr;
-    IDirect3DTexture9* tex_powerstone = nullptr;
-    IDirect3DTexture9* tex_resscroll = nullptr;
+    IDirect3DTexture9** tex_essence = nullptr;
+    IDirect3DTexture9** tex_grail = nullptr;
+    IDirect3DTexture9** tex_armor = nullptr;
+    IDirect3DTexture9** tex_powerstone = nullptr;
+    IDirect3DTexture9** tex_resscroll = nullptr;
 
     // Negative values have special meanings:
     static const int PRICE_DEFAULT = -1;
@@ -86,7 +85,6 @@ private:
     int price[N_MATS] = {};
 
     // int max = 0;
-    GW::MerchItemArray GetMerchItems() const;
     GW::Item *GetMerchItem(Material mat) const;
     GW::Item *GetBagItem(Material mat) const;
 

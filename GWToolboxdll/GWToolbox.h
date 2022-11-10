@@ -4,17 +4,15 @@
 
 #include <ToolboxModule.h>
 #include <ToolboxUIElement.h>
-#include <Utf8.h>
+#include <PluginManager.h>
 
-DWORD __stdcall SafeThreadEntry(LPVOID mod);
+DWORD __stdcall SafeThreadEntry(LPVOID mod) noexcept;
 DWORD __stdcall ThreadEntry(LPVOID);
 
 LRESULT CALLBACK SafeWndProc(HWND hWnd, UINT Message, WPARAM wParam, LPARAM lParam) noexcept;
 LRESULT CALLBACK WndProc(HWND hWnd, UINT Message, WPARAM wParam, LPARAM lParam);
 
 class GWToolbox {
-    GWToolbox() {};
-    ~GWToolbox() { free(imgui_inifile); };
 public:
     static GWToolbox& Instance() {
         static GWToolbox instance;
@@ -22,33 +20,34 @@ public:
     }
 
     static HMODULE GetDLLModule();
-    static void Draw(IDirect3DDevice9* device);
-    static void Update(GW::HookStatus *);
+    void Draw(IDirect3DDevice9* device);
+    void Update(GW::HookStatus *);
 
     void Initialize();
     void Terminate();
 
-    void OpenSettingsFile();
-    void LoadModuleSettings();
-    void SaveSettings();
-    static void FlashWindow();
+    void OpenSettingsFile() const;
+    void LoadModuleSettings() const;
+    void SaveSettings() const;
 
     void StartSelfDestruct() {
-        SaveSettings();
-        for (ToolboxModule* module : modules) {
-            module->SignalTerminate();
+        if (initialized) {
+            SaveSettings();
+            for (ToolboxModule* module : modules) {
+                module->SignalTerminate();
+            }
         }
         must_self_destruct = true;
     }
     bool must_self_destruct = false;    // is true when toolbox should quit
 
-    bool RegisterModule(ToolboxModule* m) { 
-        if (std::find(modules.begin(), modules.end(), m) == modules.end())
+    bool RegisterModule(ToolboxModule* m) {
+        if (std::ranges::find(modules, m) == modules.end())
             return modules.push_back(m), true;
         return false;
     }
     bool RegisterUIElement(ToolboxUIElement* e) {
-        if (std::find(uielements.begin(), uielements.end(), e) == uielements.end())
+        if (std::ranges::find(uielements, e) == uielements.end())
             return uielements.push_back(e), true;
         return false;
     }
@@ -59,6 +58,10 @@ public:
 
     bool right_mouse_down = false;
 
+    bool IsInitialized() const { return initialized; }
+
+    void AddPlugin(TBModule* mod) { plugins.push_back(mod); }
+    PluginManager& GetPluginManger() { return plugin_manager; };
 private:
     std::vector<ToolboxModule*> modules;
 
@@ -68,9 +71,17 @@ private:
     std::vector<ToolboxModule*> optional_modules;
     // List of modules that are UI elements. They can be disable
     std::vector<ToolboxUIElement*> uielements;
+    // Plugins
+    std::vector<TBModule*> plugins;
 
-    utf8::string imgui_inifile;
-    CSimpleIni* inifile = nullptr;
+
 
     GW::HookEntry Update_Entry;
+
+    PluginManager plugin_manager;
+
+    GW::HookEntry HandleCrash_Entry;
+
+    bool initialized = false;
+
 };

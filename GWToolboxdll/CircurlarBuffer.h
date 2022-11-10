@@ -5,8 +5,6 @@ struct CircularBuffer {
 
     CircularBuffer(size_t size)
         : buffer(new T[size])
-        , cursor(0)
-        , count(0)
         , allocated(size)
     {
     }
@@ -15,7 +13,7 @@ struct CircularBuffer {
 
     CircularBuffer(const CircularBuffer&) = delete;
 
-    CircularBuffer(CircularBuffer&& other)
+    CircularBuffer(CircularBuffer&& other) noexcept
         : buffer(other.buffer)
         , cursor(other.cursor)
         , count(other.count)
@@ -24,7 +22,7 @@ struct CircularBuffer {
         other.buffer = nullptr;
     }
 
-    ~CircularBuffer() {
+    ~CircularBuffer() noexcept {
         delete[] buffer;
     }
 
@@ -48,7 +46,7 @@ struct CircularBuffer {
         return buffer[i];
     }
 
-    inline CircularBuffer& operator=(CircularBuffer&& other) {
+    CircularBuffer& operator=(CircularBuffer&& other) noexcept {
         this->~CircularBuffer();
         buffer = other.buffer;
         cursor = other.cursor;

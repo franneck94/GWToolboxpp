@@ -7,13 +7,12 @@
 
 #include <GWCA/Managers/ChatMgr.h>
 #include <GWCA/Managers/GameThreadMgr.h>
-#include <GWCA/Managers/CtoSMgr.h>
 #include <GWCA/Managers/UIMgr.h>
 #include <GWCA/Managers/StoCMgr.h>
 
 #include <Defines.h>
 #include <Logger.h>
-#include <GuiUtils.h>
+#include <Utils/GuiUtils.h>
 
 #include <Modules/TwitchModule.h>
 
@@ -134,7 +133,7 @@ namespace {
             ((IRC*)conn)->disconnect();
             return 0;
         }
-        
+
         return 0;
     }
 }
@@ -230,21 +229,21 @@ bool TwitchModule::Connect() {
         return false;
     }*/
     // Sanitise strings to lower case
-    std::transform(irc_server.begin(), irc_server.end(), irc_server.begin(),
-        [](char c) -> char {
-            return static_cast<char>(::tolower(c));
-        });
+    std::ranges::transform(irc_server, irc_server.begin(),
+                           [](char c) -> char {
+                               return static_cast<char>(::tolower(c));
+                           });
     /*std::transform(irc_username.begin(), irc_username.end(), irc_username.begin(),
         [](unsigned char c) { return std::tolower(c); });*/
-    std::transform(irc_channel.begin(), irc_channel.end(), irc_channel.begin(),
-        [](char c) -> char {
-            return static_cast<char>(::tolower(c));
-        });
+    std::ranges::transform(irc_channel, irc_channel.begin(),
+                           [](char c) -> char {
+                               return static_cast<char>(::tolower(c));
+                           });
 
     if (conn.start(
         const_cast<char*>(irc_server.c_str()),
-        irc_port, 
-        "unused", 
+        irc_port,
+        "unused",
         "unused",
         "unused",
         const_cast<char*>(irc_password.c_str())) != 0) {
@@ -310,20 +309,21 @@ void TwitchModule::DrawSettingInternal() {
         ImGui::ShowHelp("Shouldn't need to change this.\nDefault: irc.chat.twitch.tv");
         ImGui::InputText("Twitch Username", const_cast<char*>(irc_username.c_str()), 32);
         ImGui::ShowHelp("Your username that you use for Twitch.");*/
-        ImGui::InputText("Twitch Oauth Token", const_cast<char*>(irc_password.c_str()), 255, show_irc_password ? 0 : ImGuiInputTextFlags_Password);
+        ImGui::InputText("Twitch Oauth Token", irc_password.data(), 255, show_irc_password ? 0 : ImGuiInputTextFlags_Password);
         ImGui::PopItemWidth();
         ImGui::ShowHelp("Used to connect to Twitch.\ne.g. oauth:3fplxiscsq1550zdkf8z2kh1jk7mqs");
         ImGui::SameLine();
         ImGui::Checkbox("Show", &show_irc_password);
         ImGui::Indent();
-        ImGui::TextColored(ImColor(102, 187, 238, 255), "Click Here to get a Twitch Oauth Token");
+        const ImColor col(102, 187, 238, 255);
+        ImGui::TextColored(col.Value, "Click Here to get a Twitch Oauth Token");
         if (ImGui::IsItemHovered())
             ImGui::SetTooltip("Go to %s", "https://twitchapps.com/tmi/");
         if (ImGui::IsItemClicked())
             ShellExecute(NULL, "open", "https://twitchapps.com/tmi/", NULL, NULL, SW_SHOWNORMAL);
         ImGui::Unindent();
         ImGui::PushItemWidth(width);
-        ImGui::InputText("Twitch Channel", const_cast<char*>(irc_channel.c_str()), 56);
+        ImGui::InputText("Twitch Channel", irc_channel.data(), 56);
         ImGui::ShowHelp("The Twitch username of the person who's channel you want to connect to.\nEnter your own Twitch username here to receive messages from your channel whilst streaming.");
         ImGui::PopItemWidth();
         ImGui::TextDisabled("Re-connect after making changes to use updated info");

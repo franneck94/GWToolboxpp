@@ -15,10 +15,10 @@
 #include <GWCA/Managers/StoCMgr.h>
 #include <GWCA/Managers/PlayerMgr.h>
 #include <GWCA/Managers/AgentMgr.h>
-#include <GWCA/Managers/CtoSMgr.h>
+#include <GWCA/Managers/PartyMgr.h>
 
 #include <Logger.h>
-#include <GuiUtils.h>
+#include <Utils/GuiUtils.h>
 #include <GWToolbox.h>
 
 #include <Modules/Resources.h>
@@ -29,7 +29,7 @@
 // After that, you can try every 30 seconds.
 static const uint32_t COST_PER_CONNECTION_MS     = 30 * 1000;
 static const uint32_t COST_PER_CONNECTION_MAX_MS = 60 * 1000;
-static char* months[] = { "Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec" };
+static const char* months[] = { "Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec" };
 using easywsclient::WebSocket;
 using nlohmann::json;
 using json_vec = std::vector<json>;
@@ -82,7 +82,7 @@ void TradeWindow::CmdPricecheck(const wchar_t *, int argc, LPWSTR *argv)
 {
     if (argc < 2)
         return Log::Error("Try '/pc <item>'");
-    
+
     std::string item_to_search;
     for (int i = 1; i < argc; i++) {
         if (i > 1)
@@ -134,10 +134,6 @@ void TradeWindow::SignalTerminate()
         worker.join();
     DeleteWebSocket(ws_window);
     ws_window = nullptr;
-}
-
-TradeWindow::~TradeWindow() {
-    SignalTerminate();
     if (wsaData.wVersion)
         WSACleanup();
 }
@@ -174,7 +170,7 @@ void TradeWindow::Update(float delta) {
         ws_window->poll();
     }
     bool search_pending = !pending_query_string.empty();
-    bool maintain_socket = (visible && !collapsed) || ((print_game_chat || print_game_chat_asc) && GW::UI::GetCheckboxPreference(GW::UI::CheckboxPreference_ChannelTrade) == 0) || search_pending;
+    bool maintain_socket = (visible && !collapsed) || ((print_game_chat || print_game_chat_asc) && GW::UI::GetPreference(GW::UI::FlagPreference::ChannelTrade) == 0) || search_pending;
     if (maintain_socket && !ws_window) {
         AsyncWindowConnect();
     }
@@ -189,8 +185,8 @@ void TradeWindow::Update(float delta) {
 bool TradeWindow::parse_json_message(const json& js, Message* msg) {
     if (js == json::value_t::discarded)
         return false;
-    if (!(js.contains("s") && js["s"].is_string()) 
-        || !(js.contains("m") && js["m"].is_string()) 
+    if (!(js.contains("s") && js["s"].is_string())
+        || !(js.contains("m") && js["m"].is_string())
         || !(js.contains("t") && js["t"].is_number_unsigned()))
         return false;
     msg->name = js["s"].get<std::string>();
@@ -201,7 +197,7 @@ bool TradeWindow::parse_json_message(const json& js, Message* msg) {
 }
 
 void TradeWindow::fetch() {
-    if (!ws_window || ws_window->getReadyState() != WebSocket::OPEN) 
+    if (!ws_window || ws_window->getReadyState() != WebSocket::OPEN)
         return;
     bool search_pending = !pending_query_sent && !pending_query_string.empty();
     if (search_pending) {
@@ -215,7 +211,7 @@ void TradeWindow::fetch() {
         pending_query_sent = clock();
         ws_window->send(request.dump());
     }
-    
+
     ws_window->dispatch([this](const std::string& data) {
         const json& res = json::parse(data.c_str(), nullptr, false);
         if (res == json::value_t::discarded) {
@@ -259,11 +255,11 @@ void TradeWindow::fetch() {
                 if (print_search_results && i < 5) {
                     std::wstring name_ws = GuiUtils::ToWstr(msg.name);
                     std::wstring msg_ws = GuiUtils::ToWstr(msg.message);
-                    time_t ts = (time_t)msg.timestamp;
-                    struct tm* local_tm = localtime(&ts);
+                    time_t ts = msg.timestamp;
+                    tm* local_tm = localtime(&ts);
                     if (local_tm) {
                         wchar_t buf[512];
-                        swprintf(buf, sizeof(buf), L"<a=1>%s</a> @ %S %d, %02d:%02d: <c=#f96677><quote>%s", name_ws.c_str(), months[local_tm->tm_mon], local_tm->tm_mday, local_tm->tm_hour, local_tm->tm_min, msg_ws.c_str());
+                        swprintf(buf, 512, L"<a=1>%s</a> @ %S %d, %02d:%02d: <c=#f96677><quote>%s", name_ws.c_str(), months[local_tm->tm_mon], local_tm->tm_mday, local_tm->tm_hour, local_tm->tm_min, msg_ws.c_str());
                         GW::Chat::WriteChat(GW::Chat::Channel::CHANNEL_TRADE, buf);
                     }
                 }
@@ -280,11 +276,11 @@ void TradeWindow::fetch() {
             // Currently showing a search term in-window. Only add if it matches all words.
             add_to_window = true;
             std::string input(msg.message);
-            std::transform(input.begin(), input.end(), input.begin(),
-                           [](char c) -> char {
-                               return static_cast<char>(::tolower(c));
-                           });
-            for (auto term : searched_words) {
+            std::ranges::transform(input, input.begin(),
+                                   [](char c) -> char {
+                                       return static_cast<char>(::tolower(c));
+                                   });
+            for (auto& term : searched_words) {
                 if (input.find(term) != std::string::npos)
                     continue; // Searched word no found; drop out
                 add_to_window = false;
@@ -302,7 +298,7 @@ void TradeWindow::fetch() {
             wchar_t buffer[512];
             std::wstring name_ws = GuiUtils::ToWstr(msg.name);
             std::wstring msg_ws = GuiUtils::ToWstr(msg.message);
-            swprintf(buffer, sizeof(buffer), L"<a=1>%s</a>: <c=#f96677><quote>%s", name_ws.c_str(), msg_ws.c_str());
+            swprintf(buffer, 512, L"<a=1>%s</a>: <c=#f96677><quote>%s", name_ws.c_str(), msg_ws.c_str());
             GW::Chat::WriteChat(GW::Chat::Channel::CHANNEL_TRADE, buffer);
         }
     });
@@ -314,7 +310,7 @@ bool TradeWindow::IsTradeAlert(std::string &message)
     std::regex word_regex;
     std::smatch m;
     static const std::regex regex_check = std::regex("^/(.*)/[a-z]?$", std::regex::ECMAScript | std::regex::icase);
-    for (auto &word : alert_words) {
+    for (const auto& word : alert_words) {
         if (std::regex_search(word, m, regex_check)) {
             try {
                 word_regex = std::regex(m._At(1).str(), std::regex::ECMAScript | std::regex::icase);
@@ -324,7 +320,7 @@ bool TradeWindow::IsTradeAlert(std::string &message)
             if (std::regex_search(message, word_regex))
                 return true;
         } else {
-            auto found = std::search(message.begin(), message.end(), word.begin(), word.end(), [](char c1, char c2) -> bool { return tolower(c1) == c2; });
+            auto found = std::ranges::search(message, word, [](char c1, char c2) -> bool { return tolower(c1) == c2; }).begin();
             if (found != message.end())
                 return true;
         }
@@ -339,28 +335,27 @@ void TradeWindow::search(std::string query, bool print_results_in_chat)
 }
 
 void TradeWindow::FindPlayerPartySearch(GW::HookStatus*, void*) {
-    GW::PartyContext* ctx = GW::GameContext::instance()->party;
-    if (!ctx)
-        goto clear_party_search;
-    if (GW::Map::GetInstanceType() != GW::Constants::InstanceType::Outpost)
-        goto clear_party_search;
-    auto& party_searches = ctx->party_search;
-    if (!party_searches.valid() || !party_searches.size())
-        goto clear_party_search;
-    wchar_t* me = GW::PlayerMgr::GetPlayerName(GW::PlayerMgr::GetPlayerNumber());
-    for (GW::PartySearch* party_search : party_searches) {
-        if (party_search && wcscmp(me, party_search->party_leader) == 0) {
-            GW::PartySearch* existing = &Instance().player_party_search;
-            bool message_changed = wcscmp(existing->message, party_search->message) != 0;
-            *existing = *party_search;
-            if (message_changed) {
-                std::string pps_str = GuiUtils::WStringToString(party_search->message);
-                strcpy(Instance().player_party_search_text, pps_str.c_str());
-            }
+    GW::PartyContext* ctx = GW::PartyContext::instance();
+    if (ctx && GW::Map::GetInstanceType() == GW::Constants::InstanceType::Outpost) {
+        auto& party_searches = ctx->party_search;
+        if (!party_searches.valid() || !party_searches.size()) {
+            Instance().player_party_search = {0};
             return;
         }
+        wchar_t* me = GW::PlayerMgr::GetPlayerName(GW::PlayerMgr::GetPlayerNumber());
+        for (GW::PartySearch* party_search : party_searches) {
+            if (party_search && wcscmp(me, party_search->party_leader) == 0) {
+                GW::PartySearch* existing = &Instance().player_party_search;
+                bool message_changed = wcscmp(existing->message, party_search->message) != 0;
+                *existing = *party_search;
+                if (message_changed) {
+                    std::string pps_str = GuiUtils::WStringToString(party_search->message);
+                    strcpy(Instance().player_party_search_text, pps_str.c_str());
+                }
+                return;
+            }
+        }
     }
-clear_party_search:
     Instance().player_party_search = { 0 };
 }
 
@@ -369,7 +364,7 @@ void TradeWindow::Draw(IDirect3DDevice9* device) {
     /* Alerts window */
     if (show_alert_window) {
         const float &font_scale = ImGui::GetIO().FontGlobalScale;
-        ImGui::SetNextWindowSize(ImVec2(250.f * font_scale, 220.f), ImGuiCond_FirstUseEver);
+        ImGui::SetNextWindowSize(ImVec2(768.f * font_scale, 768.f * font_scale), ImGuiCond_FirstUseEver);
         if (ImGui::Begin("Trade Alerts", &show_alert_window)) {
             DrawAlertsWindowContent(true);
         }
@@ -388,10 +383,10 @@ void TradeWindow::Draw(IDirect3DDevice9* device) {
     /* Search bar header */
     const float &font_scale = ImGui::GetIO().FontGlobalScale;
     const float btn_width = 80.0f * font_scale;
-    const float search_bar_width = (ImGui::GetWindowContentRegionWidth() - (btn_width * 4) - ImGui::GetStyle().ItemInnerSpacing.x * 7);
+    const float search_bar_width = (ImGui::GetContentRegionAvail().x - (btn_width * 4) - ImGui::GetStyle().ItemInnerSpacing.x * 7);
     if (GetInKamadanAE1(false) || GetInAscalonAE1(false)) {
         bool advertise_dirty = false;
-        static int search_type = static_cast<int>(GW::PartySearchType::PartySearchType_Trade);
+        static int search_type = GW::PartySearchType::PartySearchType_Trade;
         bool is_seeking = player_party_search.message[0] != 0;
         if (is_seeking) {
             search_type = static_cast<int>(player_party_search.party_search_type);
@@ -411,19 +406,19 @@ void TradeWindow::Draw(IDirect3DDevice9* device) {
         if (advertise_dirty) {
             if (!is_seeking) {
                 if (player_party_search.message[0])
-                    GW::CtoS::SendPacket(0x4, GAME_CMSG_PARTY_SEARCH_CANCEL);
+                    GW::PartyMgr::SearchPartyCancel();
             }
             else {
                 struct {
                     uint32_t header = GAME_CMSG_PARTY_SEARCH_SEEK;
-                    uint32_t search_type;
-                    wchar_t advert[32];
+                    uint32_t search_type = 0;
+                    wchar_t advert[32]{};
                     uint32_t hard_mode = 0;
                 } packet;
-                packet.search_type = search_type;
                 std::wstring out = GuiUtils::StringToWString(player_party_search_text);
                 swprintf(packet.advert, _countof(packet.advert), L"%s", out.c_str());
-                GW::CtoS::SendPacket(sizeof(packet), &packet);
+
+                GW::PartyMgr::SearchParty(search_type, out.data());
             }
         }
         ImGui::Separator();
@@ -488,7 +483,7 @@ void TradeWindow::Draw(IDirect3DDevice9* device) {
         ImGui::Text("Connecting...");
     } else {
         /* Display trade messages */
-        bool show_time = ImGui::GetWindowWidth() > 600.0f;
+        const bool show_time = ImGui::GetWindowWidth() > 600.0f;
 
         char timetext[128];
         time_t now = time(nullptr);
@@ -499,27 +494,27 @@ void TradeWindow::Draw(IDirect3DDevice9* device) {
         const float playernamewidth = 160.0f * font_scale;
         const float message_left = playername_left + playernamewidth + innerspacing;
 
-        size_t n_messages = messages.size();
-        for (size_t i = n_messages - 1; i < n_messages; i--) {
+        const size_t n_messages = messages.size();
+        for (int i = static_cast<int>(n_messages - 1); i >= 0; i--) {
             Message &msg = messages[i];
-            ImGui::PushID(static_cast<int>(i));
+            ImGui::PushID(i);
 
             // ==== time elapsed column ====
             if (show_time) {
                 // negative numbers have came from this before, it is probably just server client desync
-                int time_since_message = static_cast<int>(now) - static_cast<int>(msg.timestamp);
+                const int time_since_message = static_cast<int>(now) - static_cast<int>(msg.timestamp);
 
                 ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(.7f, .7f, .7f, 1.0f));
 
                 // decide if days, hours, minutes, seconds...
-                if ((int)(time_since_message / (60 * 60 * 24))) {
-                    int days = (int)(time_since_message / (60 * 60 * 24));
+                if (time_since_message / (60 * 60 * 24)) {
+                    int days = time_since_message / (60 * 60 * 24);
                     _snprintf(timetext, 128, "%d %s ago", days, days > 1 ? "days" : "day");
-                } else if ((int)(time_since_message / (60 * 60))) {
-                    int hours = (int)(time_since_message / (60 * 60));
+                } else if (time_since_message / (60 * 60)) {
+                    int hours = time_since_message / (60 * 60);
                     _snprintf(timetext, 128, "%d %s ago", hours, hours > 1 ? "hours" : "hour");
-                } else if ((int)(time_since_message / (60))) {
-                    int minutes = (int)(time_since_message / 60);
+                } else if (time_since_message / 60) {
+                    int minutes = time_since_message / 60;
                     _snprintf(timetext, 128, "%d %s ago", minutes, minutes > 1 ? "minutes" : "minute");
                 } else {
                     _snprintf(timetext, 128, "%d %s ago", time_since_message, time_since_message > 1 ? "seconds" : "second");
@@ -537,7 +532,7 @@ void TradeWindow::Draw(IDirect3DDevice9* device) {
                 // open whisper to player
                 GW::GameThread::Enqueue([&msg]() {
                     std::wstring name_ws = GuiUtils::ToWstr(msg.name);
-                    GW::UI::SendUIMessage(GW::UI::kOpenWhisper, (wchar_t *)name_ws.data(), nullptr);
+                    GW::UI::SendUIMessage(GW::UI::UIMessage::kOpenWhisper, name_ws.data());
                 });
             }
 
@@ -555,7 +550,7 @@ void TradeWindow::Draw(IDirect3DDevice9* device) {
         snprintf(buf, 128, "Powered by %s", is_kamadan_chat ? https_host_kmd : https_host_asc);
     }
 
-    if (ImGui::Button(buf, ImVec2(ImGui::GetWindowContentRegionWidth(), 20.0f))) {
+    if (ImGui::Button(buf, ImVec2(ImGui::GetContentRegionAvail().x, 20.0f))) {
         CoInitializeEx(NULL, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
         ShellExecuteA(NULL, "open", is_kamadan_chat ? https_host_kmd : https_host_asc, NULL, NULL, SW_SHOWNORMAL);
     }
@@ -586,7 +581,7 @@ void TradeWindow::DrawAlertsWindowContent(bool) {
     ImGui::Checkbox("Only show messages containing:", &filter_alerts);
     ImGui::ShowHelp("Only shows messages from the currently active trade channel (Kamadan OR Ascalon)");
     ImGui::TextDisabled("(Each line is a separate keyword. Not case sensitive.)");
-    if (ImGui::InputTextMultiline("##alertfilter", alert_buf, ALERT_BUF_SIZE, 
+    if (ImGui::InputTextMultiline("##alertfilter", alert_buf, ALERT_BUF_SIZE,
         ImVec2(-1.0f, 0.0f))) {
 
         ParseBuffer(alert_buf, alert_words);
@@ -615,6 +610,7 @@ void TradeWindow::LoadSettings(CSimpleIni* ini) {
     print_game_chat_asc = ini->GetBoolValue(Name(), VAR_NAME(print_game_chat_asc), print_game_chat_asc);
     filter_alerts = ini->GetBoolValue(Name(), VAR_NAME(filter_alerts), filter_alerts);
     filter_local_trade = ini->GetBoolValue(Name(), VAR_NAME(filter_local_trade), filter_local_trade);
+    is_kamadan_chat = ini->GetBoolValue(Name(), VAR_NAME(is_kamadan_chat), is_kamadan_chat);
 
     std::ifstream alert_file;
     alert_file.open(Resources::GetPath(L"AlertKeywords.txt"));
@@ -624,6 +620,7 @@ void TradeWindow::LoadSettings(CSimpleIni* ini) {
         ParseBuffer(alert_buf, alert_words);
     }
     alert_file.close();
+    SwitchSockets();
 }
 
 void TradeWindow::SaveSettings(CSimpleIni* ini) {
@@ -633,6 +630,7 @@ void TradeWindow::SaveSettings(CSimpleIni* ini) {
     ini->SetBoolValue(Name(), VAR_NAME(print_game_chat_asc), print_game_chat_asc);
     ini->SetBoolValue(Name(), VAR_NAME(filter_alerts), filter_alerts);
     ini->SetBoolValue(Name(), VAR_NAME(filter_local_trade), filter_local_trade);
+    ini->SetBoolValue(Name(), VAR_NAME(is_kamadan_chat), is_kamadan_chat);
 
     if (alertfile_dirty) {
         std::ofstream bycontent_file;

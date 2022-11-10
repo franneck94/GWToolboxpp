@@ -3,13 +3,13 @@
 #include <GWCA/Constants/Constants.h>
 #include <GWCA/Packets/StoC.h>
 
-#include <Color.h>
-#include <Defines.h>
-#include <Timer.h>
 #include <ToolboxWidget.h>
 
 class PartyDamage : public ToolboxWidget {
-    static const int MAX_PLAYERS = 12;
+    PartyDamage() = default;
+    ~PartyDamage() = default;
+
+    static constexpr size_t MAX_PLAYERS = 12;
 
     struct PlayerDamage {
         uint32_t damage = 0;
@@ -30,9 +30,6 @@ class PartyDamage : public ToolboxWidget {
         }
     };
 
-    PartyDamage() {
-        is_resizable = false;
-    };
 public:
     static PartyDamage& Instance() {
         static PartyDamage instance;
@@ -40,7 +37,7 @@ public:
     }
 
     const char* Name() const override { return "Damage"; }
-    const char* Icon() const override { return ICON_FA_BARS; }
+    const char8_t* Icon() const override { return ICON_FA_BARS; }
 
     void Initialize() override;
     void Terminate() override;
@@ -55,7 +52,7 @@ public:
     void DrawSettingInternal() override;
 
     void WritePartyDamage();
-    void WriteDamageOf(size_t index, uint32_t rank = 0); // party index from 0 to 12
+    void WriteDamageOf(const size_t index, uint32_t rank = 0); // party index from 0 to 12
     void WriteOwnDamage();
     void ResetDamage();
 
@@ -66,8 +63,7 @@ private:
     void CreatePartyIndexMap();
 
     float GetPartOfTotal(uint32_t dmg) const;
-    inline float GetPercentageOfTotal(uint32_t dmg) const
-    { return GetPartOfTotal(dmg) * 100.0f; };
+    float GetPercentageOfTotal(const uint32_t dmg) const { return GetPartOfTotal(dmg) * 100.0f; }
 
     // damage values
     uint32_t total = 0;
@@ -92,6 +88,7 @@ private:
     int recent_max_time = 0;
     int row_height = 0;
     bool hide_in_outpost = false;
+    bool print_by_click = false;
 
     bool snap_to_party_window = true;
     // Distance away from the party window on the x axis; used with snap to party window

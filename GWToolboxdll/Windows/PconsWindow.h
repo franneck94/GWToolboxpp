@@ -6,15 +6,14 @@
 #include <GWCA/Constants/Constants.h>
 #include <GWCA/Packets/StoC.h>
 
-#include <Defines.h>
-#include <Timer.h>
 #include <ToolboxWindow.h>
 
 #include <Windows/Pcons.h>
 
 class PconsWindow : public ToolboxWindow {
     PconsWindow();
-    ~PconsWindow() {};
+    ~PconsWindow() = default;
+
 public:
     static PconsWindow& Instance() {
         static PconsWindow instance;
@@ -22,7 +21,7 @@ public:
     }
 
     const char* Name() const override { return "Pcons"; }
-    const char* Icon() const override { return ICON_FA_BIRTHDAY_CAKE; }
+    const char8_t* Icon() const override { return ICON_FA_BIRTHDAY_CAKE; }
 
     void Initialize() override;
     void Terminate() override;
@@ -30,8 +29,11 @@ public:
     bool SetEnabled(bool b);
     bool GetEnabled();
     bool show_storage_quantity = false;
+    bool shift_click_toggles_category = false;
 
-    inline void ToggleEnable() { SetEnabled(!enabled); }
+    void ToggleEnable() { SetEnabled(!enabled); }
+
+    void Refill(bool do_refill = true);
 
     void Update(float delta) override;
 
@@ -51,13 +53,13 @@ public:
     static void OnGenericValue(GW::HookStatus *, GW::Packet::StoC::GenericValue *pak);
     static void OnPostProcessEffect(GW::HookStatus *status, GW::Packet::StoC::PostProcess *pak);
     static void OnAddExternalBond(GW::HookStatus *status, GW::Packet::StoC::AddExternalBond *pak);
-    static void CmdPcons(const wchar_t *, int argc,LPWSTR *argv);
+    static void CmdPcons(const wchar_t *, int argc, LPWSTR *argv);
 
     std::vector<Pcon*> pcons;
 
 private:
 
-    
+
     PconAlcohol* pcon_alcohol = nullptr;
     clock_t scan_inventory_timer = 0;
     bool enabled = false;
@@ -74,7 +76,7 @@ private:
 
     bool show_auto_refill_pcons_tickbox = true;
     bool show_auto_disable_pcons_tickbox = false;
-    
+
     GW::Agent* player = nullptr;
 
     // Pcon Settings
@@ -112,7 +114,7 @@ private:
         {GW::Constants::MapID::The_Underworld,{ 157 }} // Only need to check for Nightman Cometh for Underworld.
     };
     std::vector<DWORD> current_objectives_to_check = {};
-    
+
     // Map of which locations to turn off near by map_id e.g. Kanaxai, Urgoz
     const std::map<GW::Constants::MapID, GW::Vec2f>
         final_room_location_by_map_id = {
@@ -124,5 +126,5 @@ private:
     const char* disable_cons_on_objective_completion_hint = "Disable cons when final objective(s) completed";
     const char* disable_cons_in_final_room_hint = "Disable cons when reaching the final room in Urgoz and Deep";
     const char *disable_cons_on_vanquish_completion_hint = "Disable cons when completing a vanquish";
-    
+
 };

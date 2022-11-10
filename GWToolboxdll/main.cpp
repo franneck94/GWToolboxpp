@@ -5,29 +5,34 @@
 #include <Defines.h>
 #include <GWToolbox.h>
 #include <Logger.h>
+#include <Modules/CrashHandler.h>
 
 // Do all your startup things here instead.
 DWORD WINAPI init(HMODULE hModule) noexcept {
     __try {
-        Log::InitializeLog();
+        if(!Log::InitializeLog()) {
+            MessageBoxA(0, "Failed to create outgoing log file.\nThis could be due to a file permissions error or antivirus blocking.", "GWToolbox++ - Clientside Error Detected", 0);
+            FreeLibraryAndExitThread(hModule, EXIT_SUCCESS);
+        }
+
         Log::Log("Waiting for logged character\n");
 
         GW::Scanner::Initialize();
 
-        DWORD **found = (DWORD **)GW::Scanner::Find(
+        /*DWORD** found = (DWORD**)GW::Scanner::Find(
             "\xA3\x00\x00\x00\x00\xFF\x75\x0C\xC7\x05", "x????xxxxx", +1);
         if (!(found && *found)) {
             MessageBoxA(0, "We can't determine if the character is ingame.\nContact the developers.", "GWToolbox++ - Clientside Error Detected", 0);
             FreeLibraryAndExitThread(hModule, EXIT_SUCCESS);
-        } else {
-            printf("[SCAN] is_ingame = %p\n", found);
         }
 
-        DWORD *is_ingame = *found;
+        printf("[SCAN] is_ingame = %p\n", found);
+
+        DWORD* is_ingame = *found;
         while (*is_ingame == 0) {
             Sleep(100);
-        }
-        
+        }*/
+
         Log::Log("Creating toolbox thread\n");
         SafeThreadEntry(hModule);
     } __except ( EXCEPT_EXPRESSION_ENTRY ) {
@@ -57,4 +62,8 @@ BOOL WINAPI DllMain(_In_ HMODULE _HDllHandle, _In_ DWORD _Reason, _In_opt_ LPVOI
     return TRUE;
 }
 
-extern "C" __declspec(dllexport) const char *GWToolboxVersion = GWTOOLBOXDLL_VERSION;
+// Exported functions
+extern "C" __declspec(dllexport) const char* GWToolboxVersion = GWTOOLBOXDLL_VERSION;
+extern "C" __declspec(dllexport) void __cdecl Terminate() {
+    GWToolbox::Instance().StartSelfDestruct();
+}

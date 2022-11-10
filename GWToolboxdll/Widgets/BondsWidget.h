@@ -1,43 +1,15 @@
 #pragma once
 
-#include <GWCA/GameEntities/Agent.h>
-
 #include <GWCA/Constants/Skills.h>
 
 #include <GWCA/Managers/UIMgr.h>
 
 #include <Color.h>
-#include <Defines.h>
 #include <ToolboxWidget.h>
 
 class BondsWidget : public ToolboxWidget {
-    static const int MAX_BONDS = 20;
-    enum Bond {
-        BalthazarSpirit,
-        EssenceBond,
-        HolyVeil,
-        LifeAttunement,
-        LifeBarrier,
-        LifeBond,
-        LiveVicariously,
-        Mending,
-        ProtectiveBond,
-        PurifyingVeil,
-        Retribution,
-        StrengthOfHonor,
-        Succor,
-        VitalBlessing,
-        WatchfulSpirit,
-        HeroicRefrain,
-        BurningRefrain,
-        MendingRefrain,
-        BladeturnRefrain,
-        HastyRefrain,
-        None
-    };
-
-    BondsWidget() {};
-    ~BondsWidget() {};
+    BondsWidget() = default;
+    ~BondsWidget() = default;
 public:
     static BondsWidget& Instance() {
         static BondsWidget instance;
@@ -45,7 +17,7 @@ public:
     }
 
     const char* Name() const override { return "Bonds"; }
-    const char* Icon() const override { return ICON_FA_BARS; }
+    const char8_t* Icon() const override { return ICON_FA_BARS; }
 
     void Initialize() override;
     void Terminate() override;
@@ -61,15 +33,36 @@ public:
     void DrawSettingInternal() override;
 
 private:
-    void UseBuff(GW::AgentID target, DWORD buff_skillid);
-    Bond GetBondBySkillID(DWORD skillid) const;
+    std::vector<GW::Constants::SkillID> skills{
+        GW::Constants::SkillID::Balthazars_Spirit,
+        GW::Constants::SkillID::Essence_Bond,
+        GW::Constants::SkillID::Holy_Veil,
+        GW::Constants::SkillID::Life_Attunement,
+        GW::Constants::SkillID::Life_Barrier,
+        GW::Constants::SkillID::Life_Bond,
+        GW::Constants::SkillID::Live_Vicariously,
+        GW::Constants::SkillID::Mending,
+        GW::Constants::SkillID::Protective_Bond,
+        GW::Constants::SkillID::Purifying_Veil,
+        GW::Constants::SkillID::Retribution,
+        GW::Constants::SkillID::Strength_of_Honor,
+        GW::Constants::SkillID::Succor,
+        GW::Constants::SkillID::Vital_Blessing,
+        GW::Constants::SkillID::Watchful_Spirit,
+        GW::Constants::SkillID::Heroic_Refrain,
+        GW::Constants::SkillID::Burning_Refrain,
+        GW::Constants::SkillID::Mending_Refrain,
+        GW::Constants::SkillID::Bladeturn_Refrain,
+        GW::Constants::SkillID::Hasty_Refrain,
+    };
 
-    IDirect3DTexture9* textures[MAX_BONDS];
+    void UseBuff(GW::AgentID target, DWORD buff_skillid);
+
     Color background = 0;
     Color low_attribute_overlay = 0;
 
-    std::vector<size_t> bond_list;              // index to skill id
-    std::unordered_map<DWORD, size_t> bond_map; // skill id to index
+    std::vector<GW::Constants::SkillID> bond_list;               // index to skill id
+    std::unordered_map<GW::Constants::SkillID, size_t> bond_map; // skill id to index
     bool FetchBondSkills();
 
     std::vector<GW::AgentID> party_list;               // index to agent id

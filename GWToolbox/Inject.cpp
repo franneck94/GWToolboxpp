@@ -13,7 +13,7 @@
 // If we don't do that, the shield icon doesn't show up, but is there
 // a nice way to add that? (i.e. not through a pragma)
 #pragma comment(linker, "\"/manifestdependency:type='win32' \
-name='Microsoft.Windows.Common-Controls' version='6.0.0.0' \
+name='Microsoft.Windows.Common-Controls' version='6.0.1.0' \
 processorArchitecture='*' publicKeyToken='6595b64144ccf1df' language='*'\"")
 
 struct InjectProcess
@@ -187,7 +187,7 @@ InjectReply InjectWindow::AskInjectProcess(Process *target_process)
     }
 
     // Sort by name
-    std::sort(inject_processes.begin(), inject_processes.end(),
+    std::ranges::sort(inject_processes,
         [](InjectProcess &proc1, InjectProcess &proc2) {
             return proc1.m_Charname < proc2.m_Charname;
         });
@@ -385,16 +385,16 @@ void InjectWindow::OnCommand(HWND hWnd, LONG ControlId, LONG NotificationCode)
     }
 }
 
-static LPVOID GetLoadLibrary()
+static FARPROC GetLoadLibrary()
 {
-    HMODULE Kernel32 = GetModuleHandleW(L"Kernel32.dll");
+    const auto Kernel32 = GetModuleHandleW(L"Kernel32.dll");
     if (Kernel32 == nullptr)
     {
         fprintf(stderr, "GetModuleHandleW failed (%lu)\n", GetLastError());
         return nullptr;
     }
 
-    LPVOID pLoadLibraryW = GetProcAddress(Kernel32, "LoadLibraryW");
+    const auto pLoadLibraryW = GetProcAddress(Kernel32, "LoadLibraryW");
     if (pLoadLibraryW == nullptr)
     {
         fprintf(stderr, "GetProcAddress failed (%lu)\n", GetLastError());
@@ -404,11 +404,11 @@ static LPVOID GetLoadLibrary()
     return pLoadLibraryW;
 }
 
-bool InjectRemoteThread(Process *process, LPCWSTR ImagePath, LPDWORD lpExitCode)
+bool InjectRemoteThread(Process* process, LPCWSTR ImagePath, LPDWORD lpExitCode)
 {
     *lpExitCode = 0;
 
-    HANDLE ProcessHandle = process->GetHandle();
+    const auto ProcessHandle = process->GetHandle();
     if (ProcessHandle == nullptr)
     {
         fprintf(stderr, "Can't inject a dll in a process which is not open\n");

@@ -3,12 +3,12 @@
 #include <GWCA\Constants\Constants.h>
 #include <GWCA\Constants\Maps.h>
 
-#include <Logger.h>
 #include <ToolboxWindow.h>
 
 class TravelWindow : public ToolboxWindow {
-    TravelWindow() {};
-    ~TravelWindow() {};
+    TravelWindow() = default;
+    ~TravelWindow() = default;
+
 public:
     static TravelWindow& Instance() {
         static TravelWindow instance;
@@ -16,15 +16,13 @@ public:
     }
 
     const char* Name() const override { return "Travel"; }
-    const char* Icon() const override { return ICON_FA_GLOBE_EUROPE; }
+    const char8_t* Icon() const override { return ICON_FA_GLOBE_EUROPE; }
 
     void Initialize() override;
 
     void Terminate() override;
 
     bool TravelFavorite(unsigned int idx);
-
-    bool IsMapUnlocked(GW::Constants::MapID map_id);
 
     // Travel with checks, returns false if already in outpost or outpost not unlocked
     bool Travel(GW::Constants::MapID MapID, GW::Constants::District district, uint32_t district_number = 0);
@@ -51,6 +49,7 @@ public:
     void DrawSettingInternal() override;
     static int RegionFromDistrict(GW::Constants::District district);
     static int LanguageFromDistrict(GW::Constants::District district);
+    static GW::Constants::MapID GetNearestOutpost(GW::Constants::MapID map_to);
 
     static void CmdTP(const wchar_t *message, int argc, LPWSTR *argv);
 
@@ -79,7 +78,7 @@ private:
     bool map_travel_countdown_started = false;
     bool pending_map_travel = false;
 
-    IDirect3DTexture9 *scroll_texture = nullptr;
+    IDirect3DTexture9** scroll_texture = nullptr;
 
     /* Not used, but good to keep for reference!
     enum error_message_ids {
@@ -148,22 +147,21 @@ private:
         {"jq", {GW::Constants::MapID::The_Jade_Quarry_Kurzick_outpost}}
     };
     // List of shorthand district names. This is checked for an exact match.
-    const std::map<const std::string, const DistrictAlias> shorthand_district_names = 
+    const std::map<const std::string, const DistrictAlias> shorthand_district_names =
     {
         {"ae", {GW::Constants::District::American}},
-        {"ae1", {GW::Constants::District::American,1}},
         {"int", {GW::Constants::District::International}},
         {"ee", {GW::Constants::District::EuropeEnglish}},
         {"eg", {GW::Constants::District::EuropeGerman}},
         {"de", {GW::Constants::District::EuropeGerman}},
         {"dd", {GW::Constants::District::EuropeGerman}},
-        {"fr", {GW::Constants::District::EuropeFrench}},   
-        {"it", {GW::Constants::District::EuropeItalian}}, 
-        {"es", {GW::Constants::District::EuropeSpanish}},   
-        {"pl", {GW::Constants::District::EuropePolish}}, 
-        {"ru", {GW::Constants::District::EuropeRussian}},  
+        {"fr", {GW::Constants::District::EuropeFrench}},
+        {"it", {GW::Constants::District::EuropeItalian}},
+        {"es", {GW::Constants::District::EuropeSpanish}},
+        {"pl", {GW::Constants::District::EuropePolish}},
+        {"ru", {GW::Constants::District::EuropeRussian}},
         {"kr", {GW::Constants::District::AsiaKorean}},
-        {"cn", {GW::Constants::District::AsiaChinese}}, 
+        {"cn", {GW::Constants::District::AsiaChinese}},
         {"jp", {GW::Constants::District::AsiaJapanese}},
     };
 
@@ -370,7 +368,7 @@ private:
         GW::Constants::MapID::Zos_Shivros_Channel,
         GW::Constants::MapID::Great_Temple_of_Balthazar_outpost
     };
-    const GW::Constants::MapID dungeon_map_ids[11]{
+    const GW::Constants::MapID dungeon_map_ids[12]{
         GW::Constants::MapID::Doomlore_Shrine_outpost,
         GW::Constants::MapID::Doomlore_Shrine_outpost,
         GW::Constants::MapID::Doomlore_Shrine_outpost,
@@ -381,9 +379,10 @@ private:
         GW::Constants::MapID::Sifhalla_outpost,
         GW::Constants::MapID::Olafstead_outpost,
         GW::Constants::MapID::Umbral_Grotto_outpost,
-        GW::Constants::MapID::Gadds_Encampment_outpost
+        GW::Constants::MapID::Gadds_Encampment_outpost,
+        GW::Constants::MapID::Deldrimor_War_Camp_outpost
     };
-    const char* searchable_dungeon_names[11]{
+    const char* searchable_dungeon_names[12]{
         "catacombs of kathandrax",
         "kathandrax",
         "rragars menagerie",
@@ -394,7 +393,8 @@ private:
         "sepulchre of dragrimmar",
         "ravens point",
         "vloxen excavations",
-        "bogroot growths"
+        "bogroot growths",
+        "sorrows furnace"
     };
     const char* searchable_map_names[187] {
         "abaddons gate",
@@ -585,4 +585,14 @@ private:
         "zos shivros channel",
         "great temple of balthazar"
     };
+
+    std::vector<char*> searchable_explorable_areas;
+    std::vector<GuiUtils::EncString*> searchable_explorable_areas_decode;
+    std::vector<GW::Constants::MapID> searchable_explorable_area_ids;
+    enum FetchedMapNames : uint8_t {
+        Pending,
+        Decoding,
+        Decoded,
+        Ready
+    } fetched_searchable_explorable_areas = Pending;
 };

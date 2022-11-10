@@ -24,7 +24,7 @@
 #include <GWCA/Managers/GameThreadMgr.h>
 #include <GWCA/Managers/UIMgr.h>
 
-#include <GuiUtils.h>
+#include <Utils/GuiUtils.h>
 #include <GWToolbox.h>
 
 #include <Modules/Resources.h>
@@ -587,40 +587,14 @@ namespace {
         }
         return true;
     }
-    // Returns guild struct of current location. Returns null on fail or non-guild map.
-    static GW::Guild *GetCurrentGH()
-    {
-        GW::AreaInfo *m = GW::Map::GetCurrentMapInfo();
-        if (!m || m->type != GW::RegionType::RegionType_GuildHall)
-            return nullptr;
-        const GW::Array<GW::Guild *>& guilds = GW::GuildMgr::GetGuildArray();
-        if (!guilds.valid())
-            return nullptr;
-        for (size_t i = 0; i < guilds.size(); i++) {
-            if (!guilds[i])
-                continue;
-            return guilds[i];
-        }
-        return nullptr;
-    }
-    static GW::Guild *GetPlayerGH()
-    {
-        const GW::Array<GW::Guild *> &guilds = GW::GuildMgr::GetGuildArray();
-        if (!guilds.valid())
-            return nullptr;
-        uint32_t guild_idx = GW::GuildMgr::GetPlayerGuildIndex();
-        if (guild_idx >= guilds.size())
-            return nullptr;
-        return guilds[guild_idx];
-    }
     static bool IsInGH()
     {
-        GW::Guild *gh = GetCurrentGH();
-        return gh && gh == GetPlayerGH();
+        auto* p = GW::GuildMgr::GetPlayerGuild();
+        return p && p == GW::GuildMgr::GetCurrentGH();
     }
     static bool IsLuxon()
     {
-        GW::GuildContext *c = GW::GuildMgr::GetGuildContext();
+        GW::GuildContext* c = GW::GuildContext::instance();
         return c && c->player_guild_index && c->guilds[c->player_guild_index]->faction;
     }
     static bool IsAlreadyInOutpost(GW::Constants::MapID outpost_id, GW::Constants::District _district, uint32_t _district_number = 0)
@@ -635,7 +609,7 @@ namespace {
 
 void TravelWindow::Initialize() {
     ToolboxWindow::Initialize();
-    Resources::Instance().LoadTextureAsync(&scroll_texture, Resources::GetPath(L"img\\materials", L"Scroll_of_Resurrection.png"), IDB_Mat_ResScroll);
+    scroll_texture = Resources::GetItemImage(L"Passage Scroll to the Deep");
     district = GW::Constants::District::Current;
     district_number = 0;
 
@@ -645,19 +619,20 @@ void TravelWindow::Initialize() {
 }
 void TravelWindow::Terminate() {
     ToolboxWindow::Terminate();
-    if (scroll_texture)
-        scroll_texture->Release();
-    scroll_texture = nullptr;
+    for (const auto it : searchable_explorable_areas) {
+        delete[] it;
+    }
+    searchable_explorable_areas.clear();
 }
 
 void TravelWindow::TravelButton(const char* text, int x_idx, GW::Constants::MapID mapid) {
     if (x_idx != 0) ImGui::SameLine(0, ImGui::GetStyle().ItemInnerSpacing.x);
-    float w = (ImGui::GetWindowContentRegionWidth() - ImGui::GetStyle().ItemInnerSpacing.x) / 2;
+    float w = (ImGui::GetWindowWidth() - ImGui::GetStyle().ItemInnerSpacing.x) / 2 - ImGui::GetStyle().WindowPadding.x;
     bool clicked = false;
     switch (mapid) {
         case GW::Constants::MapID::The_Deep:
         case GW::Constants::MapID::Urgozs_Warren:
-            clicked |= ImGui::IconButton(text, (ImTextureID) scroll_texture, ImVec2(w, 0));
+            clicked |= ImGui::IconButton(text, (ImTextureID) *scroll_texture, ImVec2(w, 0));
             break;
         default:
             clicked |= ImGui::Button(text, ImVec2(w, 0));
@@ -768,6 +743,94 @@ void TravelWindow::Update(float delta) {
     if (scroll_to_outpost_id != GW::Constants::MapID::None) {
         ScrollToOutpost(scroll_to_outpost_id); // We're in the process of scrolling to an outpost
     }
+    // Dynamically generate a list of all explorable areas that the game has rather than storing another massive const array.
+    switch (fetched_searchable_explorable_areas) {
+    case Pending:
+        for (uint32_t i = 0; i < static_cast<uint32_t>(GW::Constants::MapID::Count); i++) {
+            GW::AreaInfo* map = GW::Map::GetMapInfo(static_cast<GW::Constants::MapID>(i));
+            if (!map || !map->name_id || !map->GetIsOnWorldMap() || map->type != GW::RegionType::ExplorableZone)
+                continue;
+            searchable_explorable_area_ids.push_back(static_cast<GW::Constants::MapID>(i));
+            GuiUtils::EncString* s = new GuiUtils::EncString(map->name_id);
+            s->string(); // Trigger decode
+            searchable_explorable_areas_decode.push_back(s);
+        }
+        fetched_searchable_explorable_areas = Decoding;
+        break;
+    case Decoding: {
+        bool ok = true;
+        for (size_t i = 0; i < searchable_explorable_areas_decode.size() && ok; i++) {
+            ok = !searchable_explorable_areas_decode[i]->string().empty();
+        }
+        if (ok)
+            fetched_searchable_explorable_areas = Decoded;
+    } break;
+    case Decoded:
+        for (size_t i = 0; i < searchable_explorable_areas_decode.size(); i++) {
+            std::string sanitised = GuiUtils::ToLower(GuiUtils::RemovePunctuation(searchable_explorable_areas_decode[i]->string()));
+            char* out = new char[sanitised.length() + 1]; // NB: Delete this char* in destructor
+            strcpy(out, sanitised.c_str());
+            delete searchable_explorable_areas_decode[i];
+            searchable_explorable_areas.push_back(out);
+        }
+        searchable_explorable_areas_decode.clear();
+        fetched_searchable_explorable_areas = Ready;
+        break;
+    }
+
+}
+GW::Constants::MapID TravelWindow::GetNearestOutpost(GW::Constants::MapID map_to) {
+    GW::AreaInfo* this_map = GW::Map::GetMapInfo(map_to);
+    GW::AreaInfo* nearest = nullptr;
+    GW::AreaInfo* map_info = nullptr;
+    float nearest_distance = FLT_MAX;
+    GW::Constants::MapID nearest_map_id = GW::Constants::MapID::None;
+
+    auto get_pos = [](GW::AreaInfo* map) {
+        GW::Vec2f pos = { (float)map->x,(float)map->y };
+        if (!pos.x) {
+            pos.x = (float)(map->icon_start_x + (map->icon_end_x - map->icon_start_x) / 2);
+            pos.y = (float)(map->icon_start_y + (map->icon_end_y - map->icon_start_y) / 2);
+        }
+        if (!pos.x) {
+            pos.x = (float)(map->icon_start_x_dupe + (map->icon_end_x_dupe - map->icon_start_x_dupe) / 2);
+            pos.y = (float)(map->icon_start_y_dupe + (map->icon_end_y_dupe - map->icon_start_y_dupe) / 2);
+        }
+        return pos;
+    };
+
+    GW::Vec2f this_pos = get_pos(this_map);
+    if (!this_pos.x)
+        this_pos = { (float)this_map->icon_start_x,(float)this_map->icon_start_y };
+    for (size_t i = 0; i < static_cast<size_t>(GW::Constants::MapID::Count); i++) {
+        map_info = GW::Map::GetMapInfo(static_cast<GW::Constants::MapID>(i));
+        if (!map_info || !map_info->thumbnail_id || !map_info->GetIsOnWorldMap())
+            continue;
+        if (map_info->campaign != this_map->campaign || map_info->region == GW::Region_Presearing)
+            continue;
+        switch (map_info->type) {
+        case GW::RegionType::City:
+        case GW::RegionType::CompetitiveMission:
+        case GW::RegionType::CooperativeMission:
+        case GW::RegionType::EliteMission:
+        case GW::RegionType::MissionOutpost:
+        case GW::RegionType::Outpost:
+            break;
+        default:
+            continue;
+        }
+        //if ((map_info->flags & 0x5000000) != 0)
+         //   continue; // e.g. "wrong" augury rock is map 119, no NPCs
+        if (!GW::Map::GetIsMapUnlocked(static_cast<GW::Constants::MapID>(i)))
+            continue;
+        float dist = GW::GetDistance(this_pos, get_pos(map_info));
+        if (dist < nearest_distance) {
+            nearest_distance = dist;
+            nearest = map_info;
+            nearest_map_id = static_cast<GW::Constants::MapID>(i);
+        }
+    }
+    return nearest_map_id;
 }
 
 bool TravelWindow::IsWaitingForMapTravel() {
@@ -848,7 +911,7 @@ void TravelWindow::ScrollToOutpost(GW::Constants::MapID outpost_id, GW::Constant
 bool TravelWindow::Travel(GW::Constants::MapID MapID, GW::Constants::District _district /*= 0*/, uint32_t _district_number) {
     if (GW::Map::GetInstanceType() == GW::Constants::InstanceType::Loading)
         return false;
-    if (!IsMapUnlocked(MapID)) {
+    if (!GW::Map::GetIsMapUnlocked(MapID)) {
         const GW::AreaInfo* map = GW::Map::GetMapInfo(MapID);
         wchar_t map_name_buf[8];
         wchar_t err_message_buf[256] = L"[Error] Your character does not have that map unlocked";
@@ -874,15 +937,6 @@ bool TravelWindow::Travel(GW::Constants::MapID MapID, GW::Constants::District _d
     return true;
     //return GW::Map::Travel(MapID, District, district_number);
 }
-bool TravelWindow::IsMapUnlocked(GW::Constants::MapID map_id) {
-    GW::Array<uint32_t> unlocked_map = GW::GameContext::instance()->world->unlocked_map;
-    uint32_t real_index = (uint32_t)map_id / 32;
-    if (real_index >= unlocked_map.size())
-        return false;
-    uint32_t shift = (uint32_t)map_id % 32;
-    uint32_t flag = 1u << shift;
-    return (unlocked_map[real_index] & flag) != 0;
-}
 void TravelWindow::UITravel(GW::Constants::MapID MapID, GW::Constants::District _district /*= 0*/, uint32_t _district_number) {
     struct MapStruct {
         GW::Constants::MapID map_id;
@@ -897,7 +951,7 @@ void TravelWindow::UITravel(GW::Constants::MapID MapID, GW::Constants::District 
     t->language_id = LanguageFromDistrict(_district);
 
     GW::GameThread::Enqueue([t] {
-        GW::UI::SendUIMessage(GW::UI::kTravel, t);
+        GW::UI::SendUIMessage(GW::UI::UIMessage::kTravel, (void*)t);
         delete t;
     });
 }
@@ -1192,24 +1246,10 @@ void TravelWindow::CmdTP(const wchar_t *message, int argc, LPWSTR *argv)
     std::wstring argDistrict = GuiUtils::ToLower(argv[argc - 1]);
     // Guild hall
     if (argOutpost == L"gh") {
-        if (argc == 2) {
-            // "/tp gh"
-            if (IsInGH())
-                GW::GuildMgr::LeaveGH();
-            else
-                GW::GuildMgr::TravelGH();
-            return;
-        }
-        // "/tp gh lag" = travel to Guild Hall belonging to Zero Files Remaining [LaG]
-        std::wstring argGuildTag = GuiUtils::ToLower(argv[2]);
-        const GW::GuildArray& guilds = GW::GuildMgr::GetGuildArray();
-        for (GW::Guild *guild : guilds) {
-            if (guild && GuiUtils::ToLower(guild->tag) == argGuildTag) {
-                GW::GuildMgr::TravelGH(guild->key);
-                return;
-            }
-        }
-        Log::Error("[Error] Did not recognize guild '%ls'", argv[2]);
+        if (IsInGH())
+            GW::GuildMgr::LeaveGH();
+        else
+            GW::GuildMgr::TravelGH();
         return;
     }
     TravelWindow &instance = Instance();
@@ -1338,6 +1378,12 @@ bool TravelWindow::ParseOutpost(const std::wstring &s, GW::Constants::MapID &out
         best_match_map_id = FindMatchingMap(compare, instance.searchable_map_names, instance.searchable_map_ids, _countof(instance.searchable_map_ids));
         if (best_match_map_id == GW::Constants::MapID::None)
             best_match_map_id = FindMatchingMap(compare, instance.searchable_dungeon_names, instance.dungeon_map_ids, _countof(instance.dungeon_map_ids));
+        if (best_match_map_id == GW::Constants::MapID::None && instance.fetched_searchable_explorable_areas == Ready) {
+            // find explorable area matching this, and then find nearest unlocked outpost.
+            best_match_map_id = FindMatchingMap(compare, const_cast<const char**>(instance.searchable_explorable_areas.data()), const_cast<const GW::Constants::MapID*>(instance.searchable_explorable_area_ids.data()), instance.searchable_explorable_area_ids.size());
+            if(best_match_map_id != GW::Constants::MapID::None)
+                best_match_map_id = GetNearestOutpost(best_match_map_id);
+        }
     }
 
     if (best_match_map_id != GW::Constants::MapID::None)
@@ -1347,16 +1393,23 @@ bool TravelWindow::ParseOutpost(const std::wstring &s, GW::Constants::MapID &out
 bool TravelWindow::ParseDistrict(const std::wstring &s, GW::Constants::District &district, uint32_t &number)
 {
     std::string compare = GuiUtils::ToLower(GuiUtils::RemovePunctuation(GuiUtils::WStringToString(s)));
-    // Shortcut words e.g "/tp ae" for american english
     std::string first_word = compare.substr(0, compare.find(' '));
 
-    TravelWindow &instance = Instance();
-    const auto &shorthand_outpost = instance.shorthand_district_names.find(first_word);
-    if (shorthand_outpost != instance.shorthand_district_names.end()) {
-        const DistrictAlias &outpost_info = shorthand_outpost->second;
-        district = outpost_info.district;
-        number = outpost_info.district_number;
-        return true;
+    const std::regex district_regex("([a-z]{2,3})(\\d)?");
+    std::smatch m;
+    if (!std::regex_search(first_word, m, district_regex)) {
+        return false;
     }
-    return false;
+    // Shortcut words e.g "/tp ae" for american english
+    TravelWindow& instance = Instance();
+    const auto& shorthand_outpost = instance.shorthand_district_names.find(m[1].str());
+    if (shorthand_outpost == instance.shorthand_district_names.end()) {
+        return false;
+    }
+    district = shorthand_outpost->second.district;
+    if (m.size() > 2 && !GuiUtils::ParseUInt(m[2].str().c_str(), &number)) {
+        number = 0;
+    }
+
+    return true;
 }

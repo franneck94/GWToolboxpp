@@ -4,18 +4,9 @@
 #include <Widgets/Minimap/VBuffer.h>
 
 class RangeRenderer : public VBuffer {
-private:
     static constexpr size_t num_circles = 8;
-    static constexpr size_t circle_points = 96;
+    static constexpr size_t circle_points = 192;
     static constexpr size_t circle_triangles = circle_points - 2;
-
-    class TargetRange : public VBuffer
-    {
-        void Initialize(IDirect3DDevice9 *device) override;
-
-    public:
-        Color color = 0;
-    };
 
 public:
     void Render(IDirect3DDevice9* device) override;

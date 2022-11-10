@@ -3,15 +3,7 @@
 #include <GWCA/Constants/Constants.h>
 
 #include <GWCA/GameContainers/GamePos.h>
-
-#include <GWCA/Context/GameContext.h>
-#include <GWCA/Context/CharContext.h>
-
-#include <GWCA/GameContainers/Array.h>
-#include <GWCA/GameContainers/GamePos.h>
-
 #include <GWCA/GameEntities/Agent.h>
-#include <GWCA/GameEntities/Skill.h>
 
 #include <GWCA/Managers/MapMgr.h>
 #include <GWCA/Managers/ChatMgr.h>
@@ -21,7 +13,7 @@
 #include <GWCA/Managers/EffectMgr.h>
 
 #include <Logger.h>
-#include <GuiUtils.h>
+#include <Utils/GuiUtils.h>
 
 #include <Modules/Resources.h>
 #include <Widgets/AlcoholWidget.h>
@@ -36,92 +28,113 @@ bool Pcon::map_has_effects_array = false;
 PconsWindow::PconsWindow() {
     const float s = 64.0f; // all icons are 64x64
 
-    pcons.push_back(new PconCons("Essence of Celerity", "Essence", "essence", L"Essence_of_Celerity.png", IDB_Pcons_Essence,
+    pcons.push_back(new PconCons("Essence of Celerity", "Essence", "essence", L"Essence of Celerity", IDB_Pcons_Essence,
         ImVec2(5 / s, 10 / s), ImVec2(46 / s, 51 / s),
         ItemID::ConsEssence, SkillID::Essence_of_Celerity_item_effect, 5));
 
-    pcons.push_back(new PconCons("Grail of Might", "Grail", "grail", L"Grail_of_Might.png", IDB_Pcons_Grail,
+    pcons.push_back(new PconCons("Grail of Might", "Grail", "grail", L"Grail of Might", IDB_Pcons_Grail,
         ImVec2(5 / s, 12 / s), ImVec2(49 / s, 56 / s),
         ItemID::ConsGrail, SkillID::Grail_of_Might_item_effect, 5));
 
-    pcons.push_back(new PconCons("Armor of Salvation", "Armor", "armor", L"Armor_of_Salvation.png", IDB_Pcons_Armor,
+    pcons.push_back(new PconCons("Armor of Salvation", "Armor", "armor", L"Armor of Salvation", IDB_Pcons_Armor,
         ImVec2(0 / s, 2 / s), ImVec2(56 / s, 58 / s),
         ItemID::ConsArmor, SkillID::Armor_of_Salvation_item_effect, 5));
 
-    pcons.push_back(new PconGeneric("Red Rock Candy", "Red Rock", "redrock", L"Red_Rock_Candy.png", IDB_Pcons_RedRock,
+    pcons.push_back(new PconGeneric("Red Rock Candy", "Red Rock", "redrock", L"Red Rock Candy", IDB_Pcons_RedRock,
         ImVec2(0 / s, 4 / s), ImVec2(52 / s, 56 / s),
         ItemID::RRC, SkillID::Red_Rock_Candy_Rush, 5));
 
-    pcons.push_back(new PconGeneric("Blue Rock Candy", "Blue Rock", "bluerock", L"Blue_Rock_Candy.png", IDB_Pcons_BlueRock,
+    pcons.push_back(new PconGeneric("Blue Rock Candy", "Blue Rock", "bluerock", L"Blue Rock Candy", IDB_Pcons_BlueRock,
         ImVec2(0 / s, 4 / s), ImVec2(52 / s, 56 / s),
         ItemID::BRC, SkillID::Blue_Rock_Candy_Rush, 10));
 
-    pcons.push_back(new PconGeneric("Green Rock Candy", "Green Rock", "greenrock", L"Green_Rock_Candy.png", IDB_Pcons_GreenRock,
+    pcons.push_back(new PconGeneric("Green Rock Candy", "Green Rock", "greenrock", L"Green Rock Candy", IDB_Pcons_GreenRock,
         ImVec2(0 / s, 4 / s), ImVec2(52 / s, 56 / s),
         ItemID::GRC, SkillID::Green_Rock_Candy_Rush, 15));
 
-    pcons.push_back(new PconGeneric("Golden Egg", "Egg", "egg", L"Golden_Egg.png", IDB_Pcons_Egg,
+    pcons.push_back(new PconGeneric("Golden Egg", "Egg", "egg", L"Golden Egg", IDB_Pcons_Egg,
         ImVec2(1 / s, 8 / s), ImVec2(48 / s, 55 / s),
         ItemID::Eggs, SkillID::Golden_Egg_skill, 20));
 
-    pcons.push_back(new PconGeneric("Candy Apple", "Apple", "apple", L"Candy_Apple.png", IDB_Pcons_Apple,
+    pcons.push_back(new PconGeneric("Candy Apple", "Apple", "apple", L"Candy Apple", IDB_Pcons_Apple,
         ImVec2(0 / s, 7 / s), ImVec2(50 / s, 57 / s),
         ItemID::Apples, SkillID::Candy_Apple_skill, 10));
 
-    pcons.push_back(new PconGeneric("Candy Corn", "Corn", "corn", L"Candy_Corn.png", IDB_Pcons_Corn,
+    pcons.push_back(new PconGeneric("Candy Corn", "Corn", "corn", L"Candy Corn", IDB_Pcons_Corn,
         ImVec2(5 / s, 10 / s), ImVec2(48 / s, 53 / s),
         ItemID::Corns, SkillID::Candy_Corn_skill, 10));
 
-    pcons.push_back(new PconGeneric("Birthday Cupcake", "Cupcake", "cupcake", L"Birthday_Cupcake.png", IDB_Pcons_Cupcake,
+    pcons.push_back(new PconGeneric("Birthday Cupcake", "Cupcake", "cupcake", L"Birthday Cupcake", IDB_Pcons_Cupcake,
         ImVec2(1 / s, 5 / s), ImVec2(51 / s, 55 / s),
         ItemID::Cupcakes, SkillID::Birthday_Cupcake_skill, 10));
 
-    pcons.push_back(new PconGeneric("Slice of Pumpkin Pie", "Pie", "pie", L"Slice_of_Pumpkin_Pie.png", IDB_Pcons_Pie,
+    pcons.push_back(new PconGeneric("Slice of Pumpkin Pie", "Pie", "pie", L"Slice of Pumpkin Pie", IDB_Pcons_Pie,
         ImVec2(0 / s, 7 / s), ImVec2(52 / s, 59 / s),
         ItemID::Pies, SkillID::Pie_Induced_Ecstasy, 10));
 
-    pcons.push_back(new PconGeneric("War Supplies", "War Supply", "warsupply", L"War_Supplies.png", IDB_Pcons_WarSupplies,
+    pcons.push_back(new PconGeneric("War Supplies", "War Supply", "warsupply", L"War Supplies", IDB_Pcons_WarSupplies,
         ImVec2(0 / s, 0 / s), ImVec2(63 / s, 63 / s),
         ItemID::Warsupplies, SkillID::Well_Supplied, 20));
 
-    pcons.push_back(pcon_alcohol = new PconAlcohol("Alcohol", "Alcohol", "alcohol", L"Dwarven_Ale.png", IDB_Pcons_Ale,
+    pcons.push_back(pcon_alcohol = new PconAlcohol("Alcohol", "Alcohol", "alcohol", L"Dwarven Ale", IDB_Pcons_Ale,
         ImVec2(-5 / s, 1 / s), ImVec2(57 / s, 63 / s),
         10));
 
-    pcons.push_back(new PconLunar("Lunar Fortunes", "Lunars", "lunars", L"Lunar_Fortune.png", IDB_Pcons_Lunar,
+    pcons.push_back(new PconLunar("Lunar Fortunes", "Lunars", "lunars", L"Lunar Fortune", IDB_Pcons_Lunar,
         ImVec2(1 / s, 4 / s), ImVec2(56 / s, 59 / s),
         10));
 
-    pcons.push_back(new PconCity("City speedboost", "City IMS", "city", L"Sugary_Blue_Drink.png", IDB_Pcons_BlueDrink,
+    pcons.push_back(new PconCity("City speedboost", "City IMS", "city", L"Sugary Blue Drink", IDB_Pcons_BlueDrink,
         ImVec2(0 / s, 1 / s), ImVec2(61 / s, 62 / s),
         20));
 
-    pcons.push_back(new PconGeneric("Drake Kabob", "Kabob", "kabob", L"Drake_Kabob.png", IDB_Pcons_Kabob,
+    pcons.push_back(new PconGeneric("Drake Kabob", "Kabob", "kabob", L"Drake Kabob", IDB_Pcons_Kabob,
         ImVec2(0 / s, 0 / s), ImVec2(64 / s, 64 / s),
         ItemID::Kabobs, SkillID::Drake_Skin, 10));
 
-    pcons.push_back(new PconGeneric("Bowl of Skalefin Soup", "Soup", "soup", L"Bowl_of_Skalefin_Soup.png", IDB_Pcons_Soup,
+    pcons.push_back(new PconGeneric("Bowl of Skalefin Soup", "Soup", "soup", L"Bowl of Skalefin Soup", IDB_Pcons_Soup,
         ImVec2(2 / s, 5 / s), ImVec2(51 / s, 54 / s),
         ItemID::SkalefinSoup, SkillID::Skale_Vigor, 10));
 
-    pcons.push_back(new PconGeneric("Pahnai Salad", "Salad", "salad", L"Pahnai_Salad.png", IDB_Pcons_Salad,
+    pcons.push_back(new PconGeneric("Pahnai Salad", "Salad", "salad", L"Pahnai Salad", IDB_Pcons_Salad,
         ImVec2(0 / s, 5 / s), ImVec2(49 / s, 54 / s),
         ItemID::PahnaiSalad, SkillID::Pahnai_Salad_item_effect, 10));
 
-    pcons.push_back(new PconRefiller("Scroll of Resurrection", "Scroll", "resscroll", L"Scroll_of_Resurrection.png", IDB_Mat_ResScroll,
+    pcons.push_back(new PconGeneric(L"Scroll of Hunter's Insight", 5976, SkillID::Hunters_Insight, 20));
+    pcons.back()->visible = false; // sets the default, LoadSettings will overwrite this
+
+    // Refillers
+    pcons.push_back(new PconRefiller("Scroll of Resurrection", "Scroll", "resscroll", L"Scroll of Resurrection", IDB_Mat_ResScroll,
         ImVec2(5 / s, 12 / s), ImVec2(49 / s, 56 / s), ItemID::ResScrolls, 5));
-    pcons.back()->visible = false; // sets the default, LoadSettings will overwrite this
-    pcons.push_back(new PconRefiller("Powerstone of Courage", "Pstone", "pstone", L"Powerstone_of_Courage.png", IDB_Mat_Powerstone,
+    pcons.push_back(new PconRefiller("Powerstone of Courage", "Pstone", "pstone", L"Powerstone of Courage", IDB_Mat_Powerstone,
         ImVec2(5 / s, 12 / s), ImVec2(49 / s, 56 / s), ItemID::Powerstone, 5));
-    pcons.back()->visible = false; // sets the default, LoadSettings will overwrite this
+
+    // Summoning Stones
+    // @Cleanup: Add these items to GWCA or something
+    pcons.push_back(new PconRefiller(L"Tengu Support Flare",30209));
+    pcons.push_back(new PconRefiller(L"Imperial Guard Reinforcement Order", 30210));
+    pcons.push_back(new PconRefiller(L"Chitinous Summoning Stone", 30959));
+    pcons.push_back(new PconRefiller(L"Amber Summoning Stone", 30961));
+    pcons.push_back(new PconRefiller(L"Arctic Summoning Stone", 30962));
+    //pcons.push_back(new PconRefiller(L"Automaton Summoning Stone", ????));
+    pcons.push_back(new PconRefiller(L"Celestial Summoning Stone", 34176));
+    pcons.push_back(new PconRefiller(L"Mystical Summoning Stone", 30960));
+    pcons.push_back(new PconRefiller(L"Demonic Summoning Stone", 30963));
+    pcons.push_back(new PconRefiller(L"Gelatinous Summoning Stone", 30964));
+    pcons.push_back(new PconRefiller(L"Fossilized Summoning Stone", 30965));
+    pcons.push_back(new PconRefiller(L"Jadeite Summoning Stone", 30966));
+    pcons.push_back(new PconRefiller(L"Mischievous Summoning Stone", 31022));
+    pcons.push_back(new PconRefiller(L"Frosty Summoning Stone", 31023));
+    pcons.push_back(new PconRefiller(L"Mercantile Summoning Stone", 31154));
+    pcons.push_back(new PconRefiller(L"Mysterious Summoning Stone", 31155));
+    pcons.push_back(new PconRefiller(L"Zaishen Summoning Stone", 31156));
+    pcons.push_back(new PconRefiller(L"Ghastly Summoning Stone", 32557));
+    pcons.push_back(new PconRefiller(L"Shining Blade Warhorn", 35126));
 }
 void PconsWindow::Initialize() {
     ToolboxWindow::Initialize();
     AlcoholWidget::Instance().Initialize(); // Pcons depend on alcohol widget to track current drunk level.
-    Resources::Instance().LoadTextureAsync(&button_texture, Resources::GetPath(L"img/icons", L"cupcake.png"), IDB_Icon_Cupcake);
-    for (Pcon* pcon : pcons) {
-        pcon->Initialize();
-    }
+    Resources::Instance().LoadTexture(&button_texture, Resources::GetPath(L"img/icons", L"cupcake.png"), IDB_Icon_Cupcake);
 
     GW::StoC::RegisterPacketCallback<GW::Packet::StoC::AgentSetPlayer>(&AgentSetPlayer_Entry,
     [](GW::HookStatus *, GW::Packet::StoC::AgentSetPlayer *pak) -> void {
@@ -143,12 +156,12 @@ void PconsWindow::Terminate()
         pcon->Terminate();
     }
 }
-void PconsWindow::OnAddExternalBond(GW::HookStatus *status, GW::Packet::StoC::AddExternalBond *pak) 
+void PconsWindow::OnAddExternalBond(GW::HookStatus *status, GW::Packet::StoC::AddExternalBond *pak)
 {
     if (PconAlcohol::suppress_lunar_skills &&
         pak->caster_id == GW::Agents::GetPlayerId() && pak->receiver_id == 0 &&
-        (pak->skill_id == (DWORD)GW::Constants::SkillID::Spiritual_Possession ||
-         pak->skill_id == (DWORD)GW::Constants::SkillID::Lucky_Aura)) {
+        (pak->skill_id == (DWORD)SkillID::Spiritual_Possession ||
+         pak->skill_id == (DWORD)SkillID::Lucky_Aura)) {
         // printf("blocked skill %d\n", pak->skill_id);
         status->blocked = true;
     }
@@ -166,7 +179,7 @@ void PconsWindow::OnPostProcessEffect(GW::HookStatus *status,
 void PconsWindow::OnGenericValue(GW::HookStatus *, GW::Packet::StoC::GenericValue *pak) {
     if (PconAlcohol::suppress_drunk_emotes
         && pak->agent_id == GW::Agents::GetPlayerId()
-        && pak->Value_id == 22) {
+        && pak->value_id == 22) {
 
         if (pak->value == 0x33E807E5) pak->value = 0; // kneel
         if (pak->value == 0x313AC9D1) pak->value = 0; // bored
@@ -184,61 +197,100 @@ void PconsWindow::OnAgentState(GW::HookStatus *, GW::Packet::StoC::AgentState *p
     }
 }
 void PconsWindow::OnSpeechBubble(GW::HookStatus *status, GW::Packet::StoC::SpeechBubble *pak) {
-    if (!PconAlcohol::suppress_drunk_text) return;
-    bool blocked = status->blocked;
-    status->blocked = true;
-        
-    wchar_t* m = pak->message;
-    if (m[0] == 0x8CA && m[1] == 0xA4F7 && m[2] == 0xF552 && m[3] == 0xA32) return; // i love you man!
-    if (m[0] == 0x8CB && m[1] == 0xE20B && m[2] == 0x9835 && m[3] == 0x4C75) return; // I'm the king of the world!
-    if (m[0] == 0x8CC && m[1] == 0xFA4D && m[2] == 0xF068 && m[3] == 0x393) return; // I think I need to sit down
-    if (m[0] == 0x8CD && m[1] == 0xF2C2 && m[2] == 0xBBAD && m[3] == 0x1EAD) return; // I think I'm gonna be sick
-    if (m[0] == 0x8CE && m[1] == 0x85E5 && m[2] == 0xF726 && m[3] == 0x68B1) return; // Oh no, not again
-    if (m[0] == 0x8CF && m[1] == 0xEDD3 && m[2] == 0xF2B9 && m[3] == 0x3F34) return; // It's spinning...
-    if (m[0] == 0x8D0 && m[1] == 0xF056 && m[2] == 0xE7AD && m[3] == 0x7EE6) return; // Everyone stop shouting!
-    if (m[0] == 0x8101 && m[1] == 0x6671 && m[2] == 0xCBF8 && m[3] == 0xE717) return; // "BE GONE!"
-    if (m[0] == 0x8101 && m[1] == 0x6672 && m[2] == 0xB0D6 && m[3] == 0xCE2F) return; // "Soon you will all be crushed."
-    if (m[0] == 0x8101 && m[1] == 0x6673 && m[2] == 0xDAA5 && m[3] == 0xD0A1) return; // "You are no match for my almighty power."
-    if (m[0] == 0x8101 && m[1] == 0x6674 && m[2] == 0x8BF9 && m[3] == 0x8C19) return; // "Such fools to think you can attack me here. Come closer so you can see the face of your doom!"
-    if (m[0] == 0x8101 && m[1] == 0x6675 && m[2] == 0x996D && m[3] == 0x87BA) return; // "No one can stop me, let alone you puny mortals!"
-    if (m[0] == 0x8101 && m[1] == 0x6676 && m[2] == 0xBAFA && m[3] == 0x8E15) return; // "You are messing with affairs that are beyond your comprehension. Leave now and I may let you live!"
-    if (m[0] == 0x8101 && m[1] == 0x6677 && m[2] == 0xA186 && m[3] == 0xF84C) return; // "His blood has returned me to my mortal body."
-    if (m[0] == 0x8101 && m[1] == 0x6678 && m[2] == 0xD2ED && m[3] == 0xE693) return; // "I have returned!"
-    if (m[0] == 0x8101 && m[1] == 0x6679 && m[2] == 0xA546 && m[3] == 0xF24A) return; // "Abaddon will feast on your eyes!"
-    if (m[0] == 0x8101 && m[1] == 0x667A && m[2] == 0xB477 && m[3] == 0xA79A) return; // "Abaddon's sword has been drawn. He sends me back to you with tokens of renewed power!"
-    if (m[0] == 0x8101 && m[1] == 0x667B && m[2] == 0x8FBB && m[3] == 0xC739) return; // "Are you the Keymaster?"
-    if (m[0] == 0x8101 && m[1] == 0x667C && m[2] == 0xFE50 && m[3] == 0xC173) return; // "Human sacrifice. Dogs and cats living together. Mass hysteria!"
-    if (m[0] == 0x8101 && m[1] == 0x667D && m[2] == 0xBBC6 && m[3] == 0xAC9E) return; // "Take me now, subcreature."'
-    if (m[0] == 0x8101 && m[1] == 0x667E && m[2] == 0xCD71 && m[3] == 0xDEE3) return; // "We must prepare for the coming of Banjo the Clown, God of Puppets."
-    if (m[0] == 0x8101 && m[1] == 0x667F && m[2] == 0xE823 && m[3] == 0x9435) return; // "This house is clean."
-    if (m[0] == 0x8101 && m[1] == 0x6680 && m[2] == 0x82FC && m[3] == 0xDCEC) return;
-    if (m[0] == 0x8101 && m[1] == 0x6681 && m[2] == 0xC86C && m[3] == 0xB975) return; // "Mommy? Where are you? I can't find you. I can't. I'm afraid of the light, mommy. I'm afraid of the light."
-    if (m[0] == 0x8101 && m[1] == 0x6682 && m[2] == 0xE586 && m[3] == 0x9311) return; // "Get away from my baby!"
-    if (m[0] == 0x8101 && m[1] == 0x6683 && m[2] == 0xA949 && m[3] == 0xE643) return; // "This house has many hearts."'
-    if (m[0] == 0x8101 && m[1] == 0x6684 && m[2] == 0xB765 && m[3] == 0x93F1) return; // "As a boy I spent much time in these lands."
-    if (m[0] == 0x8101 && m[1] == 0x6685 && m[2] == 0xEDE0 && m[3] == 0xAF1D) return; // "I see dead people."
-    if (m[0] == 0x8101 && m[1] == 0x6686 && m[2] == 0xD356 && m[3] == 0xDC69) return; // "Do you like my fish balloon? Can you hear it singing to you...?"
-    if (m[0] == 0x8101 && m[1] == 0x6687 && m[2] == 0xEA3C && m[3] == 0x96F0) return; // "4...Itchy...Tasty..."
-    if (m[0] == 0x8101 && m[1] == 0x6688 && m[2] == 0xCBDD && m[3] == 0xB1CF) return; // "Gracious me, was I raving? Please forgive me. I'm mad."
-    if (m[0] == 0x8101 && m[1] == 0x6689 && m[2] == 0xE770 && m[3] == 0xEEA4) return; // "Keep away. The sow is mine."
-    if (m[0] == 0x8101 && m[1] == 0x668A && m[2] == 0x885F && m[3] == 0xE61D) return; // "All is well. I'm not insane."
-    if (m[0] == 0x8101 && m[1] == 0x668B && m[2] == 0xCCDD && m[3] == 0x88AA) return; // "I like how they've decorated this place. The talking lights are a nice touch."
-    if (m[0] == 0x8101 && m[1] == 0x668C && m[2] == 0x8873 && m[3] == 0x9A16) return; // "There's a reason there's a festival ticket in my ear. I'm trying to lure the evil spirits out of my head."
-    if (m[0] == 0x8101 && m[1] == 0x668D && m[2] == 0xAF68 && m[3] == 0xF84A) return; // "And this is where I met the Lich. He told me to burn things."
-    if (m[0] == 0x8101 && m[1] == 0x668E && m[2] == 0xFE43 && m[3] == 0x9CB3) return; // "When I grow up, I want to be a principal or a caterpillar."
-    if (m[0] == 0x8101 && m[1] == 0x668F && m[2] == 0xDAFF && m[3] == 0x903E) return; // "Oh boy, sleep! That's where I'm a Luxon."
-    if (m[0] == 0x8101 && m[1] == 0x6690 && m[2] == 0xA1F5 && m[3] == 0xD15F) return; // "My cat's breath smells like cat food."
-    if (m[0] == 0x8101 && m[1] == 0x6691 && m[2] == 0xAE54 && m[3] == 0x8EC6) return; // "My cat's name is Mittens."
-    if (m[0] == 0x8101 && m[1] == 0x6692 && m[2] == 0xDFBB && m[3] == 0xD674) return; // "Then the healer told me that BOTH my eyes were lazy. And that's why it was the best summer ever!"
-    if (m[0] == 0x8101 && m[1] == 0x6693 && m[2] == 0xAC9F && m[3] == 0xDCBE) return; // "Go, banana!"
-    if (m[0] == 0x8101 && m[1] == 0x6694 && m[2] == 0x9ACA && m[3] == 0xC746) return; // "It's a trick. Get an axe."
-    if (m[0] == 0x8101 && m[1] == 0x6695 && m[2] == 0x8ED8 && m[3] == 0xD572) return; // "Klaatu...barada...necktie?"
-    if (m[0] == 0x8101 && m[1] == 0x6696 && m[2] == 0xE883 && m[3] == 0xFED7) return; // "You're disgusting, but I love you!"
-    if (m[0] == 0x8101 && m[1] == 0x68BA && m[2] == 0xA875 && m[3] == 0xA785) return; // "Cross over, children. All are welcome. All welcome. Go into the light. There is peace and serenity in the light."
-    //printf("m[0] == 0x%X && m[1] == 0x%X && m[2] == 0x%X && m[3] == 0x%X\n", m[0], m[1], m[2], m[3]);
+    if (!PconAlcohol::suppress_drunk_text || status->blocked) return;
 
-    status->blocked = blocked;
-    return;
+    const wchar_t* m = pak->message;
+    const std::wstring_view msg{m, 4};
+    const std::initializer_list<std::wstring_view> msgs = {
+        L"\x8CA\xA4F7\xF552\xA32",       // i love you man!
+        L"\x8CB\xE20B\x9835\x4C75",      // I'm the king of the world!
+        L"\x8CC\xFA4D\xF068\x393",       // I think I need to sit down
+        L"\x8CD\xF2C2\xBBAD\x1EAD",      // I think I'm gonna be sick
+        L"\x8CE\x85E5\xF726\x68B1",      // Oh no, not again
+        L"\x8CF\xEDD3\xF2B9\x3F34",      // It's spinning...
+        L"\x8D0\xF056\xE7AD\x7EE6",      // Everyone stop shouting!
+        L"\x8101\x6671\xCBF8\xE717",     // "BE GONE!"
+        L"\x8101\x6672\xB0D6\xCE2F",     // "Soon you will all be crushed."
+        L"\x8101\x6673\xDAA5\xD0A1",     // "You are no match for my almighty power."
+        L"\x8101\x6674\x8BF9\x8C19",     // "Such fools to think you can attack me here. Come closer so you can see the face of your doom!"
+        L"\x8101\x6675\x996D\x87BA",     // "No one can stop me, let alone you puny mortals!"
+        L"\x8101\x6676\xBAFA\x8E15",     // "You are messing with affairs that are beyond your comprehension. Leave now and I may let you live!"
+        L"\x8101\x6677\xA186\xF84C",     // "His blood has blocked = trueed me to my mortal body."
+        L"\x8101\x6678\xD2ED\xE693",     // "I have blocked = trueed!"
+        L"\x8101\x6679\xA546\xF24A",     // "Abaddon will feast on your eyes!"
+        L"\x8101\x667A\xB477\xA79A",     // "Abaddon's sword has been drawn. He sends me back to you with tokens of renewed power!"
+        L"\x8101\x667B\x8FBB\xC739",     // "Are you the Keymaster?"
+        L"\x8101\x667C\xFE50\xC173",     // "Human sacrifice. Dogs and cats living together. Mass hysteria!"
+        L"\x8101\x667D\xBBC6\xAC9E",     // "Take me now, subcreature."'
+        L"\x8101\x667E\xCD71\xDEE3",     // "We must prepare for the coming of Banjo the Clown, God of Puppets."
+        L"\x8101\x667F\xE823\x9435",     // "This house is clean."
+        L"\x8101\x6680\x82FC\xDCEC",
+        L"\x8101\x6681\xC86C\xB975",     // "Mommy? Where are you? I can't find you. I can't. I'm afraid of the light, mommy. I'm afraid of the light."
+        L"\x8101\x6682\xE586\x9311",     // "Get away from my baby!"
+        L"\x8101\x6683\xA949\xE643",     // "This house has many hearts."'
+        L"\x8101\x6684\xB765\x93F1",     // "As a boy I spent much time in these lands."
+        L"\x8101\x6685\xEDE0\xAF1D",     // "I see dead people."
+        L"\x8101\x6686\xD356\xDC69",     // "Do you like my fish balloon? Can you hear it singing to you...?"
+        L"\x8101\x6687\xEA3C\x96F0",     // "4...Itchy...Tasty..."
+        L"\x8101\x6688\xCBDD\xB1CF",     // "Gracious me, was I raving? Please forgive me. I'm mad."
+        L"\x8101\x6689\xE770\xEEA4",     // "Keep away. The sow is mine."
+        L"\x8101\x668A\x885F\xE61D",     // "All is well. I'm not insane."
+        L"\x8101\x668B\xCCDD\x88AA",     // "I like how they've decorated this place. The talking lights are a nice touch."
+        L"\x8101\x668C\x8873\x9A16",     // "There's a reason there's a festival ticket in my ear. I'm trying to lure the evil spirits out of my head."
+        L"\x8101\x668D\xAF68\xF84A",     // "And this is where I met the Lich. He told me to burn things."
+        L"\x8101\x668E\xFE43\x9CB3",     // "When I grow up, I want to be a principal or a caterpillar."
+        L"\x8101\x668F\xDAFF\x903E",     // "Oh boy, sleep! That's where I'm a Luxon."
+        L"\x8101\x6690\xA1F5\xD15F",     // "My cat's breath smells like cat food."
+        L"\x8101\x6691\xAE54\x8EC6",     // "My cat's name is Mittens."
+        L"\x8101\x6692\xDFBB\xD674",     // "Then the healer told me that BOTH my eyes were lazy. And that's why it was the best summer ever!"
+        L"\x8101\x6693\xAC9F\xDCBE",     // "Go, banana!"
+        L"\x8101\x6694\x9ACA\xC746",     // "It's a trick. Get an axe."
+        L"\x8101\x6695\x8ED8\xD572",     // "Klaatu...barada...necktie?"
+        L"\x8101\x6696\xE883\xFED7",     // "You're disgusting, but I love you!"
+        L"\x8101\x68BA\xA875\xA785",     // "Cross over, children. All are welcome. All welcome. Go into the light. There is peace and serenity in the light."
+        L"\x8102\x4939\xD402\x99F3",     // start grog messages
+        L"\x1FAA\xD6B1\x8599\x7B2D",
+        L"\x1FB2\xD54E\x9029\x151A",
+        L"\x1FAB\xFCDD\xA466\x3243",
+        L"\x1FB3\xB822\xF276\x2B0C",
+        L"\x1FAC\xBC27\xAC6B\x32C2",
+        L"\x1FAD\xA6B8\xC903\x5EAE",
+        L"\x8102\x4918\xCA53\xE82F",
+        L"\x1FB4\xFF89\xC048\x17A6",
+        L"\x1FB5\xE225\x97D1\x122C",
+        L"\x1FAE\xD24E\x9E99\x6D3 ",
+        L"\x8102\x491A\x9B62\xF12C",
+        L"\x1FAF\x8265\xD9B0\x300D",
+        L"\x1FB6\xBD6A\x88D1\x4F59",
+        L"\x8102\x493B\x96C7\x8B03",
+        L"\x8102\x4929\xA216\xC64B",
+        L"\x8103\xAC8\xD5E7\x951E",
+        L"\x8103\xA6C\xDAFC\xDC30",
+        L"\x8102\x4916\x9FC6\x913A",
+        L"\x8102\x4930\xEB29\xA9A1",
+        L"\x8102\x4938\xC1E8\xC1E7",
+        L"\x8102\x4932\x8516\xBF4C",
+        L"\x8102\x4936\xB245\xCA89",
+        L"\x8102\x4942\xA195\xF718",
+        L"\x8102\x4927\x8AA7\xD5AB",
+        L"\x8102\x492F\xA315\x9062",
+        L"\x8103\xA90\xD7A3\x9B78",
+        L"\x8102\x4933\x82F9\xEE62",
+        L"\x8102\x492D\xAE7F\x9205",
+        L"\x8102\x4924\x9EED\xED02",
+        L"\x8102\x4931\xEA9D\xD3D5",
+        L"\x8102\x4921\xA36D\xCE7A",
+        L"\x8102\x4937\xACEA\x8B90",
+        L"\x8102\x4928\xC8E9\x8953",    // the ship, it's spinning
+        L"\x8102\x4919\xBC36\xB446",
+        L"\x8102\x492B\xC39F\xD6FA",
+        L"\x8102\x4923\xAA60\x9F98",    // end grog messages
+    };
+    if (std::ranges::find(msgs, msg) != std::ranges::end(msgs)) {
+        status->blocked = true;
+    }
+
+    //printf("\\x%X\\x%X\\x%X\\x%X\n", m[0], m[1], m[2], m[3]);
 }
 void PconsWindow::OnObjectiveDone(GW::HookStatus *,GW::Packet::StoC::ObjectiveDone *packet)
 {
@@ -254,19 +306,63 @@ void PconsWindow::OnVanquishComplete(GW::HookStatus *,GW::Packet::StoC::Vanquish
     instance.SetEnabled(false);
     Log::Info("Cons auto-disabled on completion");
 }
-void PconsWindow::CmdPcons(const wchar_t *, int argc, LPWSTR *argv)
-{
+void PconsWindow::CmdPcons(const wchar_t*, int argc, LPWSTR* argv) {
     if (argc <= 1) {
         Instance().ToggleEnable();
-    } else { // we are ignoring parameters after the first
+    } else if (argc >= 2) {
         std::wstring arg1 = GuiUtils::ToLower(argv[1]);
-        if (arg1 == L"on") {
-            Instance().SetEnabled(true);
-        } else if (arg1 == L"off") {
-            Instance().SetEnabled(false);
+        if (arg1 != L"on" && arg1 != L"off" && arg1 != L"toggle" && arg1 != L"refill") {
+            Log::Error("Invalid argument '%ls', please use /pcons [on|off|toggle] [pcon]", argv[1]);
+        }
+        if (argc == 2) {
+            if (arg1 == L"on") {
+                Instance().SetEnabled(true);
+            } else if (arg1 == L"off") {
+                Instance().SetEnabled(false);
+            } else if (arg1 == L"toggle") {
+                Instance().ToggleEnable();
+            } else if (arg1 == L"refill") {
+                Instance().Refill();
+            }
         } else {
-            Log::Error("Invalid argument '%ls', please use /pcons [|on|off]",
-                       argv[1]);
+            std::wstring argPcon = GuiUtils::ToLower(argv[2]);
+            for (int i = 3; i < argc; i++) {
+                argPcon.append(L" ");
+                argPcon.append(GuiUtils::ToLower(argv[i]));
+            }
+            std::vector<Pcon*> pcons = Instance().pcons;
+            std::string compare = GuiUtils::WStringToString(argPcon);
+            unsigned int compareLength = compare.length();
+            Pcon* bestMatch = nullptr;
+            unsigned int bestMatchLength = 0;
+            for (size_t i = 0; i < pcons.size(); ++i) {
+                Pcon* pcon = pcons[i];
+                std::string pconName(pcon->chat);
+                std::string pconNameSanitized = GuiUtils::ToLower(pconName);
+                unsigned int pconNameLength = pconNameSanitized.length();
+                if (compareLength > pconNameLength) continue;
+                if (pconNameSanitized.rfind(compare) == std::string::npos) continue;
+                if (bestMatchLength < pconNameLength) {
+                    bestMatchLength = pconNameLength;
+                    bestMatch = pcon;
+                    if (bestMatchLength == pconNameLength) {
+                        break;
+                    }
+                }
+            }
+            if (bestMatch == nullptr) {
+                Log::Error("Could not find pcon %ls", argPcon.c_str());
+                return;
+            }
+            if (arg1 == L"on") {
+                bestMatch->SetEnabled(true);
+            } else if (arg1 == L"off") {
+                bestMatch->SetEnabled(false);
+            } else if (arg1 == L"toggle") {
+                bestMatch->Toggle();
+            } else if (arg1 == L"refill") {
+                bestMatch->Refill();
+            }
         }
     }
 }
@@ -277,7 +373,7 @@ bool PconsWindow::DrawTabButton(IDirect3DDevice9* device, bool show_icon, bool s
     ImGui::PushStyleColor(ImGuiCol_Text, enabled ? ImVec4(0, 1, 0, 1) : ImVec4(1, 0, 0, 1));
     ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
     if (ImGui::Button(enabled ? "Enabled###pconstoggle" : "Disabled###pconstoggle",
-        ImVec2(ImGui::GetWindowContentRegionWidth(), 0))) {
+        ImVec2(ImGui::GetContentRegionAvail().x, 0))) {
         ToggleEnable();
     }
     ImGui::PopStyleColor();
@@ -292,7 +388,7 @@ void PconsWindow::Draw(IDirect3DDevice9* device) {
     if (show_enable_button) {
         ImGui::PushStyleColor(ImGuiCol_Text, enabled ? ImVec4(0, 1, 0, 1) : ImVec4(1, 0, 0, 1));
         if (ImGui::Button(enabled ? "Enabled###pconstoggle" : "Disabled###pconstoggle",
-            ImVec2(ImGui::GetWindowContentRegionWidth(), 0))) {
+            ImVec2(ImGui::GetContentRegionAvail().x, 0))) {
             ToggleEnable();
         }
         ImGui::PopStyleColor();
@@ -306,8 +402,8 @@ void PconsWindow::Draw(IDirect3DDevice9* device) {
             pcons[i]->Draw(device);
         }
     }
-    
-    if(instance_type == GW::Constants::InstanceType::Explorable && show_auto_disable_pcons_tickbox) {
+
+    if (instance_type == InstanceType::Explorable && show_auto_disable_pcons_tickbox) {
         if (j && j % items_per_row > 0)
             ImGui::NewLine();
         if (!current_objectives_to_check.empty()) {
@@ -324,21 +420,16 @@ void PconsWindow::Draw(IDirect3DDevice9* device) {
         }
     }
     ImGui::End();
-    
+
 }
 void PconsWindow::Update(float delta) {
     UNREFERENCED_PARAMETER(delta);
     if (instance_type != GW::Map::GetInstanceType() || map_id != GW::Map::GetMapID())
         MapChanged(); // Map changed.
-    if (!player && instance_type == GW::Constants::InstanceType::Explorable)
+    if (!player && instance_type == InstanceType::Explorable)
         player = GW::Agents::GetPlayer(); // Won't be immediately able to get player ptr on map load, so put here.
-    if (!Pcon::map_has_effects_array && player != nullptr) {
-        // If we haven't yet found an effects array for this map, try to find it.
-        GW::AgentEffectsArray partyEffects = GW::Effects::GetPartyEffectArray();
-        if (partyEffects.valid()) {
-            for (size_t i = 0; i < partyEffects.size() && !Pcon::map_has_effects_array; i++)
-                Pcon::map_has_effects_array = partyEffects[i].agent_id == player->agent_id;
-        }
+    if (!Pcon::map_has_effects_array) {
+        Pcon::map_has_effects_array = GW::Effects::GetPlayerEffectsArray() != nullptr;
     }
     in_vanquishable_area = GW::Map::GetFoesToKill() != 0;
     CheckBossRangeAutoDisable();
@@ -350,13 +441,13 @@ void PconsWindow::MapChanged() {
     elite_area_check_timer = TIMER_INIT();
     map_id = GW::Map::GetMapID();
     Pcon::map_has_effects_array = false;
-    if(instance_type != GW::Constants::InstanceType::Loading)
+    if(instance_type != InstanceType::Loading)
         previous_instance_type = instance_type;
     instance_type = GW::Map::GetInstanceType();
     // If we've just come from an explorable area then disable pcons.
-    if (disable_pcons_on_map_change && previous_instance_type == GW::Constants::InstanceType::Explorable)
+    if (disable_pcons_on_map_change && previous_instance_type == InstanceType::Explorable)
         SetEnabled(false);
-    
+
     player = nullptr;
     elite_area_disable_triggered = false;
     // Find out which objectives we need to complete for this map.
@@ -377,7 +468,12 @@ void PconsWindow::MapChanged() {
         current_final_room_location = GW::Vec2f(0, 0);
     }
 
-    
+
+}
+void PconsWindow::Refill(bool do_refill) {
+    for (Pcon* pcon : pcons) {
+        pcon->Refill(do_refill && pcon->IsEnabled());
+    }
 }
 bool PconsWindow::GetEnabled() {
     return enabled;
@@ -385,14 +481,12 @@ bool PconsWindow::GetEnabled() {
 bool PconsWindow::SetEnabled(bool b) {
     if (enabled == b) return enabled; // Do nothing - already enabled/disabled.
     enabled = b;
-    for (Pcon* pcon : pcons) {
-        pcon->ResetCounts();
-    }
+    Refill(enabled);
     switch (GW::Map::GetInstanceType()) {
-    case GW::Constants::InstanceType::Outpost:
+    case InstanceType::Outpost:
         if(tick_with_pcons)
             GW::PartyMgr::Tick(enabled);
-    case GW::Constants::InstanceType::Explorable: {
+    case InstanceType::Explorable: {
         if (HotkeysWindow::Instance().current_hotkey &&
             !HotkeysWindow::Instance()
                  .current_hotkey->show_message_in_emote_channel)
@@ -427,21 +521,22 @@ void PconsWindow::RegisterSettingsContent() {
 void PconsWindow::DrawLunarsAndAlcoholSettings() {
     ImGui::Text("Lunars and Alcohol");
     ImGui::Text("Current drunk level: %d", Pcon::alcohol_level);
-    ImGui::Checkbox("Suppress lunar and drunk post-processing effects", &Pcon::suppress_drunk_effect);
+    ImGui::StartSpacedElements(380.f);
+    ImGui::NextSpacedElement(); ImGui::Checkbox("Suppress lunar and drunk post-processing effects", &Pcon::suppress_drunk_effect);
     ImGui::ShowHelp("Will actually disable any *change*, so make sure you're not drunk already when enabling this!");
-    ImGui::Checkbox("Suppress lunar and drunk text", &Pcon::suppress_drunk_text);
+    ImGui::NextSpacedElement(); ImGui::Checkbox("Suppress lunar and drunk text", &Pcon::suppress_drunk_text);
     ImGui::ShowHelp("Will hide drunk and lunars messages on top of your and other characters");
-    ImGui::Checkbox("Suppress drunk emotes", &Pcon::suppress_drunk_emotes);
+    ImGui::NextSpacedElement(); ImGui::Checkbox("Suppress drunk emotes", &Pcon::suppress_drunk_emotes);
     ImGui::ShowHelp("Important:\n"
         "This feature is experimental and might crash your game.\n"
         "Using level 1 alcohol instead of this is recommended for preventing drunk emotes.\n"
         "This will prevent kneel, bored, moan, flex, fistshake and roar.\n");
-    ImGui::Checkbox("Hide Spiritual Possession and Lucky Aura", &Pcon::suppress_lunar_skills);
+    ImGui::NextSpacedElement(); ImGui::Checkbox("Hide Spiritual Possession and Lucky Aura", &Pcon::suppress_lunar_skills);
     ImGui::ShowHelp("Will hide the skills in your effect monitor");
 }
 
 void PconsWindow::CheckObjectivesCompleteAutoDisable() {
-    if (!enabled || elite_area_disable_triggered || instance_type != GW::Constants::InstanceType::Explorable) {
+    if (!enabled || elite_area_disable_triggered || instance_type != InstanceType::Explorable) {
         return;     // Pcons disabled, auto disable already triggered, or not in explorable area.
     }
     if (!disable_cons_on_objective_completion || objectives_complete.empty() || current_objectives_to_check.empty()) {
@@ -463,7 +558,7 @@ void PconsWindow::CheckObjectivesCompleteAutoDisable() {
 }
 
 void PconsWindow::CheckBossRangeAutoDisable() { // Trigger Elite area auto disable if applicable
-    if (!enabled || elite_area_disable_triggered || instance_type != GW::Constants::InstanceType::Explorable) {
+    if (!enabled || elite_area_disable_triggered || instance_type != InstanceType::Explorable) {
         return;     // Pcons disabled, auto disable already triggered, or not in explorable area.
     }
     if (!disable_cons_in_final_room || current_final_room_location == GW::Vec2f(0, 0) || !player || TIMER_DIFF(elite_area_check_timer) < 1000) {
@@ -471,7 +566,7 @@ void PconsWindow::CheckBossRangeAutoDisable() { // Trigger Elite area auto disab
     }
     elite_area_check_timer = TIMER_INIT();
     float d = GetDistance(GW::Vec2f(player->pos), current_final_room_location);
-    if (d > 0 && d <= GW::Constants::Range::Spirit) {
+    if (d > 0 && d <= Range::Spirit) {
         elite_area_disable_triggered = true;
         SetEnabled(false);
         Log::Info("Cons auto-disabled in range of boss");
@@ -481,7 +576,7 @@ void PconsWindow::CheckBossRangeAutoDisable() { // Trigger Elite area auto disab
 void PconsWindow::LoadSettings(CSimpleIni* ini) {
     ToolboxWindow::LoadSettings(ini);
     show_menubutton = ini->GetBoolValue(Name(), VAR_NAME(show_menubutton), true);
-    
+
     for (Pcon* pcon : pcons) {
         pcon->LoadSettings(ini, Name());
     }
@@ -499,13 +594,12 @@ void PconsWindow::LoadSettings(CSimpleIni* ini) {
     Pcon::suppress_drunk_emotes = ini->GetBoolValue(Name(), VAR_NAME(suppress_drunk_emotes), false);
     Pcon::suppress_lunar_skills = ini->GetBoolValue(Name(), VAR_NAME(suppress_lunar_skills), false);
     Pcon::pcons_by_character = ini->GetBoolValue(Name(), VAR_NAME(pcons_by_character), Pcon::pcons_by_character);
-    Pcon::hide_city_pcons_in_explorable_areas = ini->GetBoolValue(Name(), VAR_NAME(hide_city_pcons_in_explorable_areas), Pcon::hide_city_pcons_in_explorable_areas);
-
     Pcon::refill_if_below_threshold = ini->GetBoolValue(Name(), VAR_NAME(refill_if_below_threshold), false);
     show_auto_refill_pcons_tickbox = ini->GetBoolValue(Name(), VAR_NAME(show_auto_refill_pcons_tickbox), show_auto_refill_pcons_tickbox);
     show_auto_disable_pcons_tickbox = ini->GetBoolValue(Name(), VAR_NAME(show_auto_disable_pcons_tickbox), show_auto_disable_pcons_tickbox);
 
     show_storage_quantity = ini->GetBoolValue(Name(), VAR_NAME(show_storage_quantity), show_storage_quantity);
+    shift_click_toggles_category = ini->GetBoolValue(Name(), VAR_NAME(shift_click_toggles_category), shift_click_toggles_category);
 
     disable_pcons_on_map_change = ini->GetBoolValue(Name(), VAR_NAME(disable_pcons_on_map_change), disable_pcons_on_map_change);
     disable_cons_on_vanquish_completion = ini->GetBoolValue(Name(), VAR_NAME(disable_cons_on_vanquish_completion), disable_cons_on_vanquish_completion);
@@ -539,6 +633,7 @@ void PconsWindow::SaveSettings(CSimpleIni* ini) {
     ini->SetBoolValue(Name(), VAR_NAME(refill_if_below_threshold), Pcon::refill_if_below_threshold);
     ini->SetBoolValue(Name(), VAR_NAME(show_auto_refill_pcons_tickbox), show_auto_refill_pcons_tickbox);
     ini->SetBoolValue(Name(), VAR_NAME(show_auto_disable_pcons_tickbox), show_auto_disable_pcons_tickbox);
+    ini->SetBoolValue(Name(), VAR_NAME(shift_click_toggles_category), shift_click_toggles_category);
     ini->SetBoolValue(Name(), VAR_NAME(show_storage_quantity), show_storage_quantity);
 
     ini->SetBoolValue(Name(), VAR_NAME(disable_pcons_on_map_change), disable_pcons_on_map_change);
@@ -550,17 +645,22 @@ void PconsWindow::SaveSettings(CSimpleIni* ini) {
 void PconsWindow::DrawSettingInternal() {
     ImGui::Separator();
     ImGui::Text("Functionality:");
-    ImGui::Checkbox("Toggle Pcons per character", &Pcon::pcons_by_character);
+    ImGui::StartSpacedElements(275.f);
+    ImGui::NextSpacedElement(); ImGui::Checkbox("Toggle Pcons per character", &Pcon::pcons_by_character);
     ImGui::ShowHelp("Tick to remember pcon enable/disable per character.\nUntick to enable/disable regardless of current character.");
-    ImGui::Checkbox("Tick with pcons", &tick_with_pcons);
+    ImGui::NextSpacedElement(); ImGui::Checkbox("Tick with pcons", &tick_with_pcons);
     ImGui::ShowHelp("Enabling or disabling pcons will also Tick or Untick in party list");
-    ImGui::Checkbox("Disable when not found", &Pcon::disable_when_not_found);
+    ImGui::NextSpacedElement(); ImGui::Checkbox("Disable when not found", &Pcon::disable_when_not_found);
     ImGui::ShowHelp("Toolbox will disable a pcon if it is not found in the inventory");
-    ImGui::Checkbox("Refill from storage", &Pcon::refill_if_below_threshold);
+    ImGui::NextSpacedElement(); ImGui::Checkbox("Refill from storage", &Pcon::refill_if_below_threshold);
     ImGui::ShowHelp("Toolbox will refill pcons from storage if below the threshold");
-    ImGui::Checkbox("Show storage quantity in outpost", &show_storage_quantity);
+    ImGui::NextSpacedElement(); ImGui::Checkbox("Show storage quantity in outpost", &show_storage_quantity);
     ImGui::ShowHelp("Display a number on the bottom of each pcon icon, showing total quantity in storage.\n"
                     "This only displays when in an outpost.");
+    ImGui::NextSpacedElement();
+    ImGui::Checkbox("Shift + Click toggles category", &shift_click_toggles_category);
+    ImGui::ShowHelp("If this is ticked, clicking on a pcon while holding shift will enable/disable all of the same category\n"
+                    "Categories: Conset, Rock Candies, Kabob+Soup+Salad");
     ImGui::SliderInt("Pcons delay", &Pcon::pcons_delay, 100, 5000, "%d milliseconds");
     ImGui::ShowHelp(
         "After using a pcon, toolbox will not use it again for this amount of time.\n"
@@ -570,7 +670,7 @@ void PconsWindow::DrawSettingInternal() {
     if (ImGui::TreeNodeEx("Thresholds", ImGuiTreeNodeFlags_FramePadding | ImGuiTreeNodeFlags_SpanAvailWidth)) {
         ImGui::Text("When you have less than this amount:\n-The number in the interface becomes yellow.\n-Warning message is displayed when zoning into outpost.");
         for (Pcon* pcon : pcons) {
-            ImGui::SliderInt(pcon->chat, &pcon->threshold, 0, 250);
+            ImGui::SliderInt(pcon->chat.c_str(), &pcon->threshold, 0, 250);
         }
         ImGui::TreePop();
     }
@@ -583,15 +683,14 @@ void PconsWindow::DrawSettingInternal() {
     Colors::DrawSettingHueWheel("Enabled-Background", &Pcon::enabled_bg_color);
     if (Pcon::size <= 1.0f) Pcon::size = 1.0f;
     if (ImGui::TreeNodeEx("Visibility", ImGuiTreeNodeFlags_FramePadding | ImGuiTreeNodeFlags_SpanAvailWidth)) {
-        ImGui::Checkbox("Enable/Disable button", &show_enable_button);
-        ImGui::Checkbox("Show auto disable pcons checkboxes", &show_auto_disable_pcons_tickbox);
+        ImGui::StartSpacedElements(300.f);
+        ImGui::NextSpacedElement(); ImGui::Checkbox("Show Enable/Disable button", &show_enable_button);
+        ImGui::NextSpacedElement(); ImGui::Checkbox("Show auto disable pcons checkboxes", &show_auto_disable_pcons_tickbox);
         ImGui::ShowHelp("Will show a tickbox in the pcons window when in an elite area");
-        ImGui::Checkbox("Hide city Pcons in explorable areas", &Pcon::hide_city_pcons_in_explorable_areas);
-        bool i = false;
+        ImGui::NextSpacedElement(); ImGui::Checkbox("Hide city Pcons in explorable areas", &Pcon::hide_city_pcons_in_explorable_areas);
+        ImGui::StartSpacedElements(280.f);
         for (Pcon* pcon : pcons) {
-            if (i) ImGui::SameLine(300.0f * ImGui::GetIO().FontGlobalScale);
-            i = !i;
-            ImGui::Checkbox(pcon->chat, &pcon->visible);
+            ImGui::NextSpacedElement(); ImGui::Checkbox(pcon->chat.c_str(), &pcon->visible);
         }
         ImGui::TreePop();
     }
@@ -600,12 +699,13 @@ void PconsWindow::DrawSettingInternal() {
     DrawLunarsAndAlcoholSettings();
     ImGui::Separator();
     ImGui::Text("Auto-Disabling Pcons");
-    ImGui::Checkbox("Auto Disable on Vanquish completion", &disable_cons_on_vanquish_completion);
+    ImGui::StartSpacedElements(380.f);
+    ImGui::NextSpacedElement(); ImGui::Checkbox("Auto Disable on Vanquish completion", &disable_cons_on_vanquish_completion);
     ImGui::ShowHelp(disable_cons_on_vanquish_completion_hint);
-    ImGui::Checkbox("Auto Disable in final room of Urgoz/Deep", &disable_cons_in_final_room);
+    ImGui::NextSpacedElement(); ImGui::Checkbox("Auto Disable in final room of Urgoz/Deep", &disable_cons_in_final_room);
     ImGui::ShowHelp(disable_cons_in_final_room_hint);
-    ImGui::Checkbox("Auto Disable on final objective completion", &disable_cons_on_objective_completion);
+    ImGui::NextSpacedElement(); ImGui::Checkbox("Auto Disable on final objective completion", &disable_cons_on_objective_completion);
     ImGui::ShowHelp(disable_cons_on_objective_completion_hint);
-    ImGui::Checkbox("Disable on map change", &disable_pcons_on_map_change);
+    ImGui::NextSpacedElement(); ImGui::Checkbox("Disable on map change", &disable_pcons_on_map_change);
     ImGui::ShowHelp("Toolbox will disable pcons when leaving an explorable area");
 }

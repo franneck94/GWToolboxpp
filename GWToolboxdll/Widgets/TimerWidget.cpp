@@ -12,12 +12,11 @@
 #include <GWCA/Managers/EffectMgr.h>
 #include <GWCA/Managers/StoCMgr.h>
 
-#include <GuiUtils.h>
+#include <Utils/GuiUtils.h>
 #include <Logger.h>
 #include <Timer.h>
 
 #include <Modules/GameSettings.h>
-#include <Modules/ToolboxSettings.h>
 #include <Widgets/TimerWidget.h>
 
 using namespace std::chrono;
@@ -25,6 +24,8 @@ using namespace std::chrono;
 namespace
 {
     steady_clock::time_point now() { return steady_clock::now(); }
+
+    bool instance_timer_valid = true;
 
     bool is_valid(const steady_clock::time_point& time) { return time.time_since_epoch().count(); }
 
@@ -39,7 +40,7 @@ namespace
                 break;
             case 2: snprintf(buf, bufsize, "%d:%02d:%02lld.%02lld", hrs, mins, secs, time.count() / 10 % 100);
                 break;
-            case 3: snprintf(buf, bufsize, "%d:%02d:%02lld.%03lld", hrs, mins, secs, time.count() % 1000); 
+            case 3: snprintf(buf, bufsize, "%d:%02d:%02lld.%03lld", hrs, mins, secs, time.count() % 1000);
                 break;
             default: // and 0
                 snprintf(buf, bufsize, "%d:%02d:%02lld", hrs, mins, secs);
@@ -47,7 +48,53 @@ namespace
         }
     }
 }
+// Called before map change
+void TimerWidget::OnPreGameSrvTransfer(GW::HookStatus*, GW::Packet::StoC::GameSrvTransfer*) {
+    if (print_time_zoning && in_explorable && !is_valid(run_completed)) {
+        // do this here, before we actually reset it
+        PrintTimer();
+    }
+    run_completed = now();
+}
+// Called just after map change
+void TimerWidget::OnPostGameSrvTransfer(GW::HookStatus*, GW::Packet::StoC::GameSrvTransfer* pak) {
+    cave_start = 0; // reset doa's cave timer
+    instance_timer_valid = false;
+    std::chrono::steady_clock::time_point now_tp = now();
+    run_completed = std::chrono::steady_clock::time_point();
 
+    instance_started = now_tp;
+
+    // If reset_next_loading_screen, reset regardless of never_reset
+    if (reset_next_loading_screen) {
+        run_started = now_tp;
+        reset_next_loading_screen = false;
+    }
+
+    if (!never_reset) {
+        if (pak->is_explorable && !in_explorable) { // if zoning from outpost to explorable
+            run_started = now_tp;
+        }
+        else if (!pak->is_explorable) { // zoning back to outpost
+            run_started = now_tp;
+        }
+
+        GW::AreaInfo* info = GW::Map::GetMapInfo((GW::Constants::MapID)pak->map_id);
+        if (info) {
+            bool new_in_dungeon = (info->type == GW::RegionType::Dungeon);
+
+            if (new_in_dungeon && !in_dungeon) { // zoning from explorable to dungeon
+                run_started = now_tp;
+            }
+
+            in_dungeon = new_in_dungeon;
+        }
+    }
+    if(!is_valid(run_started))
+        run_started = now_tp;
+
+    in_explorable = pak->is_explorable;
+}
 void TimerWidget::Initialize() {
     ToolboxWidget::Initialize();
 
@@ -58,50 +105,29 @@ void TimerWidget::Initialize() {
             cave_start = GW::Map::GetInstanceTime();
         });
 
-    GW::StoC::RegisterPostPacketCallback<GW::Packet::StoC::GameSrvTransfer>(&GameSrvTransfer_Entry,
-        [this](GW::HookStatus*, GW::Packet::StoC::GameSrvTransfer* pak) -> void {
-            cave_start = 0; // reset doa's cave timer
+    GW::StoC::RegisterPacketCallback<GW::Packet::StoC::GameSrvTransfer>(&PreGameSrvTransfer_Entry,
+        [](GW::HookStatus* status, GW::Packet::StoC::GameSrvTransfer* pak) -> void {
+        Instance().OnPreGameSrvTransfer(status, pak);
+        }, -0x10);
 
-            if (print_time_zoning && in_explorable && !is_valid(run_completed)) {
-                // do this here, before we actually reset it
-                PrintTimer();
-            }
-
-            if (!never_reset) {
-                if (reset_next_loading_screen) {
-                    run_started = now();
-                    reset_next_loading_screen = false;
-                }
-
-                if (pak->is_explorable && !in_explorable) { // if zoning from outpost to explorable
-                    run_started = now();
-                }
-                if (!pak->is_explorable) { // zoning back to outpost
-                    run_started = now();
-                }
-
-                GW::AreaInfo* info = GW::Map::GetMapInfo((GW::Constants::MapID)pak->map_id);
-                if (info) {
-                    bool new_in_dungeon = (info->type == GW::RegionType_Dungeon);
-
-                    if (new_in_dungeon && !in_dungeon) { // zoning from explorable to dungeon
-                        run_started = now();
-                    }
-
-                    in_dungeon = new_in_dungeon;
-                }
-            }
-            run_completed = steady_clock::time_point();
-            in_explorable = pak->is_explorable;
-        });
+    GW::StoC::RegisterPacketCallback<GW::Packet::StoC::GameSrvTransfer>(&PostGameSrvTransfer_Entry,
+        [](GW::HookStatus* status, GW::Packet::StoC::GameSrvTransfer* pak) -> void {
+            Instance().OnPostGameSrvTransfer(status, pak);
+        },0x5);
+    GW::StoC::RegisterPacketCallback<GW::Packet::StoC::InstanceTimer>(&InstanceTimer_Entry,
+        [this](GW::HookStatus*, GW::Packet::StoC::InstanceTimer*) -> void {
+            instance_timer_valid = true;
+        },5);
     in_explorable = GW::Map::GetInstanceType() == GW::Constants::InstanceType::Explorable;
-    GW::Chat::CreateCommand(L"resettimer", [this](const wchar_t*, int, LPWSTR*) { 
+    GW::Chat::CreateCommand(L"resettimer", [this](const wchar_t*, int, LPWSTR*) {
         reset_next_loading_screen = true;
         Log::Info("Resetting timer at the next loading screen.");
     });
-    GW::Chat::CreateCommand(L"timerreset", [this](const wchar_t*, int, LPWSTR*) { 
-        reset_next_loading_screen = true; 
+    GW::Chat::CreateCommand(L"timerreset", [this](const wchar_t*, int, LPWSTR*) {
+        reset_next_loading_screen = true;
     });
+    if (!is_valid(run_started))
+        run_started = now() - milliseconds(GW::Map::GetInstanceTime());
 }
 
 
@@ -118,9 +144,24 @@ void TimerWidget::LoadSettings(CSimpleIni *ini) {
     click_to_print_time = ini->GetBoolValue(Name(), VAR_NAME(click_to_print_time), click_to_print_time);
     print_time_zoning = ini->GetBoolValue(Name(), VAR_NAME(print_time_zoning), print_time_zoning);
     print_time_objective = ini->GetBoolValue(Name(), VAR_NAME(print_time_objective), print_time_objective);
-    show_extra_timers = ini->GetBoolValue(Name(), VAR_NAME(show_extra_timers), show_extra_timers);
+    bool show_extra_timers = ini->GetBoolValue(Name(), VAR_NAME(show_extra_timers), true);
+    if (!show_extra_timers) {
+        // Legacy
+        show_deep_timer = false;
+        show_urgoz_timer = false;
+        show_doa_timer = false;
+        show_dhuum_timer = false;
+        show_dungeon_traps_timer = false;
+    }
+    else {
+        show_deep_timer = ini->GetBoolValue(Name(), VAR_NAME(show_deep_timer), show_deep_timer);
+        show_urgoz_timer = ini->GetBoolValue(Name(), VAR_NAME(show_urgoz_timer), show_urgoz_timer);
+        show_doa_timer = ini->GetBoolValue(Name(), VAR_NAME(show_doa_timer), show_doa_timer);
+        show_dhuum_timer = ini->GetBoolValue(Name(), VAR_NAME(show_dhuum_timer), show_dhuum_timer);
+        show_dungeon_traps_timer = ini->GetBoolValue(Name(), VAR_NAME(show_dungeon_traps_timer), show_dungeon_traps_timer);
+    }
     show_spirit_timers = ini->GetBoolValue(Name(), VAR_NAME(show_spirit_timers), show_spirit_timers);
-    for (auto it : spirit_effects) {
+    for (const auto& it : spirit_effects) {
         char ini_name[32];
         snprintf(ini_name, 32, "spirit_effect_%d", it.first);
         spirit_effects_enabled[it.first] = ini->GetBoolValue(Name(), ini_name, spirit_effects_enabled[it.first]);
@@ -138,9 +179,13 @@ void TimerWidget::SaveSettings(CSimpleIni *ini) {
     ini->SetBoolValue(Name(), VAR_NAME(click_to_print_time), click_to_print_time);
     ini->SetBoolValue(Name(), VAR_NAME(print_time_zoning), print_time_zoning);
     ini->SetBoolValue(Name(), VAR_NAME(print_time_objective), print_time_objective);
-    ini->SetBoolValue(Name(), VAR_NAME(show_extra_timers), show_extra_timers);
     ini->SetBoolValue(Name(), VAR_NAME(show_spirit_timers), show_spirit_timers);
-    for (auto it : spirit_effects) {
+    ini->SetBoolValue(Name(), VAR_NAME(show_deep_timer), show_deep_timer);
+    ini->SetBoolValue(Name(), VAR_NAME(show_doa_timer), show_doa_timer);
+    ini->SetBoolValue(Name(), VAR_NAME(show_urgoz_timer), show_urgoz_timer);
+    ini->SetBoolValue(Name(), VAR_NAME(show_dhuum_timer), show_dhuum_timer);
+    ini->SetBoolValue(Name(), VAR_NAME(show_dungeon_traps_timer), show_dungeon_traps_timer);
+    for (const auto& it : spirit_effects) {
         char ini_name[32];
         snprintf(ini_name, 32, "spirit_effect_%d", it.first);
         ini->SetBoolValue(Name(), ini_name, spirit_effects_enabled[it.first]);
@@ -149,6 +194,7 @@ void TimerWidget::SaveSettings(CSimpleIni *ini) {
 
 void TimerWidget::DrawSettingInternal() {
     ToolboxWidget::DrawSettingInternal();
+
     ImGui::SameLine(); ImGui::Checkbox("Hide in outpost", &hide_in_outpost);
     if (ImGui::RadioButton("Instance timer", use_instance_timer)) {
         use_instance_timer = true;
@@ -172,36 +218,61 @@ void TimerWidget::DrawSettingInternal() {
     }
     ImGui::Text("Print time:");
     ImGui::Indent();
+    ImGui::StartSpacedElements(200.f);
+    ImGui::NextSpacedElement();
     ImGui::Checkbox("With Ctrl+Click on timer", &click_to_print_time);
+    ImGui::NextSpacedElement();
     ImGui::Checkbox("At objective completion", &print_time_objective);
+    ImGui::NextSpacedElement();
     ImGui::Checkbox("When leaving explorables", &print_time_zoning);
     ImGui::Unindent();
 
-    ImGui::Checkbox("Show extra timers", &show_extra_timers);
-    ImGui::ShowHelp("Such as Deep aspects");
+    ImGui::Text("Show extra timers:");
+    ImGui::Indent();
+
+    std::vector<std::pair<const char*, bool*>> timers = {
+        { "Deep aspects",&show_deep_timer},
+        { "DoA cave",&show_doa_timer},
+        { "Dhuum",&show_dhuum_timer},
+        { "Urgoz doors",&show_urgoz_timer},
+        { "Dungeon traps",&show_dungeon_traps_timer}
+    };
+    ImGui::StartSpacedElements(140.f);
+    for (size_t i = 0; i < timers.size();i++) {
+        ImGui::NextSpacedElement();
+        ImGui::Checkbox(timers[i].first, timers[i].second);
+    }
+    ImGui::Unindent();
     ImGui::Checkbox("Show spirit timers", &show_spirit_timers);
     ImGui::ShowHelp("Time until spirits die in seconds");
     if (show_spirit_timers) {
         ImGui::Indent();
-        size_t i = 0;
-        for (auto it : spirit_effects) {
-            if (i % 3 == 0) {
-                i = 0;
-            } else {
-                ImGui::SameLine(200.0f * ImGui::GetIO().FontGlobalScale * i);
-            }
-            i++;
+        ImGui::StartSpacedElements(140.f);
+        for (const auto& it : spirit_effects) {
+            ImGui::NextSpacedElement();
             ImGui::Checkbox(it.second, &spirit_effects_enabled[it.first]);
         }
         ImGui::Unindent();
     }
 }
 
-std::chrono::milliseconds TimerWidget::GetTimer()
-{   
-    if (use_instance_timer || !is_valid(run_started)) {
-        return milliseconds(GW::Map::GetInstanceTime());
-
+std::chrono::milliseconds TimerWidget::GetMapTimeElapsed() {
+    if (!is_valid(instance_started)) {
+        // Can happen if toolbox was started after map load
+        instance_started = now() - milliseconds(GW::Map::GetInstanceTime());
+    }
+    return duration_cast<milliseconds>(now() - instance_started);
+}
+std::chrono::milliseconds TimerWidget::GetTimer() {
+    if (use_instance_timer) {
+        return milliseconds(instance_timer_valid ? GW::Map::GetInstanceTime() : 0);
+    }
+    return GetRunTimeElapsed();
+}
+std::chrono::milliseconds TimerWidget::GetRunTimeElapsed()
+{
+    if (!is_valid(run_started)) {
+        return milliseconds(0);
     } else if (is_valid(run_completed)) {
         return duration_cast<milliseconds>(run_completed - run_started);
 
@@ -209,15 +280,26 @@ std::chrono::milliseconds TimerWidget::GetTimer()
         return duration_cast<milliseconds>(now() - run_started);
     }
 }
+unsigned long TimerWidget::GetStartPoint() const
+{
+    const auto time_point = use_instance_timer ? instance_started : run_started;
+    if (!is_valid(time_point)) {
+        return static_cast<unsigned long>(-1);
+    }
+    return static_cast<unsigned long>(duration_cast<milliseconds>(time_point.time_since_epoch()).count());
+}
 
 unsigned long TimerWidget::GetTimerMs() { return static_cast<unsigned long>(GetTimer().count()); }
+unsigned long TimerWidget::GetMapTimeElapsedMs() { return static_cast<unsigned long>(GetMapTimeElapsed().count()); }
+unsigned long TimerWidget::GetRunTimeElapsedMs() { return static_cast<unsigned long>(GetRunTimeElapsed().count()); }
 
-void TimerWidget::SetRunCompleted()
+
+void TimerWidget::SetRunCompleted(const bool no_print)
 {
     if (is_valid(run_started) && stop_at_objective_completion) {
         run_completed = now();
     }
-    if (print_time_objective && is_valid(run_started) && is_valid(run_completed)) {
+    if (print_time_objective && is_valid(run_started) && is_valid(run_completed) && !no_print) {
         PrintTimer();
     }
 }
@@ -240,7 +322,7 @@ void TimerWidget::Draw(IDirect3DDevice9* pDevice) {
     if (hide_in_outpost && GW::Map::GetInstanceType() == GW::Constants::InstanceType::Outpost)
         return;
 
-    bool ctrl_pressed = ImGui::IsKeyDown(VK_CONTROL);
+    const bool ctrl_pressed = ImGui::IsKeyDown(ImGuiKey_ModCtrl);
     ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0, 0, 0, 0));
     ImGui::SetNextWindowSize(ImVec2(250.0f, 90.0f), ImGuiCond_FirstUseEver);
     if (ImGui::Begin(Name(), nullptr, GetWinFlags(0, !(click_to_print_time && ctrl_pressed)))) {
@@ -258,25 +340,32 @@ void TimerWidget::Draw(IDirect3DDevice9* pDevice) {
             ImGui::PopFont();
         }
 
-        if (show_extra_timers && (GetUrgozTimer() || GetDeepTimer() || GetDhuumTimer() || GetTrapTimer() || GetDoATimer())) {
-
-            ImGui::PushFont(GuiUtils::GetFont(GuiUtils::FontSize::widget_label));
-            ImVec2 cur2 = ImGui::GetCursorPos();
-            ImGui::SetCursorPos(ImVec2(cur2.x + 2, cur2.y + 2));
-            ImGui::TextColored(ImColor(0, 0, 0), extra_buffer);
-            ImGui::SetCursorPos(cur2);
-            ImGui::TextColored(extra_color, extra_buffer);
-            ImGui::PopFont();
-        }
-        if (GetSpiritTimer()) {
+        auto drawTimer = [](char* buffer, ImColor* extra_color = 0) {
             ImGui::PushFont(GuiUtils::GetFont(GuiUtils::FontSize::widget_label));
             ImVec2 cur2 = ImGui::GetCursorPos();
             ImGui::SetCursorPos(ImVec2(cur2.x + 1, cur2.y + 1));
-            ImGui::TextColored(ImColor(0, 0, 0), spirits_buffer);
+            ImGui::TextColored(ImColor(0, 0, 0), buffer);
             ImGui::SetCursorPos(cur2);
-            ImGui::Text(spirits_buffer);
+            if (extra_color) {
+                ImGui::TextColored(*extra_color, buffer);
+            }
+            else {
+                ImGui::Text(buffer);
+            }
             ImGui::PopFont();
-        }
+        };
+        if (show_deep_timer && GetDeepTimer())
+            drawTimer(extra_buffer, &extra_color);
+        if (show_urgoz_timer && GetUrgozTimer())
+            drawTimer(extra_buffer, &extra_color);
+        if (show_doa_timer && GetDoATimer())
+            drawTimer(extra_buffer, &extra_color);
+        if (show_dungeon_traps_timer && GetTrapTimer())
+            drawTimer(extra_buffer, &extra_color);
+        if (show_dhuum_timer && GetDhuumTimer())
+            drawTimer(extra_buffer, &extra_color);
+        if (show_spirit_timers && GetSpiritTimer())
+            drawTimer(spirits_buffer);
 
         if (click_to_print_time) {
             ImVec2 size = ImGui::GetWindowSize();
@@ -293,7 +382,6 @@ void TimerWidget::Draw(IDirect3DDevice9* pDevice) {
     ImGui::End();
     ImGui::PopStyleColor();
 }
-
 bool TimerWidget::GetUrgozTimer() {
     if (GW::Map::GetMapID() != GW::Constants::MapID::Urgozs_Warren) return false;
     if (GW::Map::GetInstanceType() != GW::Constants::InstanceType::Explorable) return false;
@@ -314,20 +402,20 @@ bool TimerWidget::GetSpiritTimer() {
 
     if (!show_spirit_timers || GW::Map::GetInstanceType() != InstanceType::Explorable) return false;
 
-    GW::EffectArray effects = GW::Effects::GetPlayerEffectArray();
-    if (!effects.valid()) return false;
+    GW::EffectArray* effects = GW::Effects::GetPlayerEffects();
+    if (!effects) return false;
 
     int offset = 0;
-    for (DWORD i = 0; i < effects.size(); ++i) {
-        if (!effects[i].duration)
+    for (auto& effect : *effects) {
+        if (!effect.duration)
             continue;
-        SkillID effect_id = (SkillID)effects[i].skill_id;
+        SkillID effect_id = effect.skill_id;
         auto spirit_effect_enabled = spirit_effects_enabled.find(effect_id);
         if (spirit_effect_enabled == spirit_effects_enabled.end() || !(spirit_effect_enabled->second))
             continue;
-        offset += snprintf(&spirits_buffer[offset], sizeof(spirits_buffer) - offset, "%s%s: %d", offset ? "\n" : "", spirit_effects[effect_id], effects[i].GetTimeRemaining() / 1000);
+        offset += snprintf(&spirits_buffer[offset], sizeof(spirits_buffer) - offset, "%s%s: %d", offset ? "\n" : "", spirit_effects[effect_id], effect.GetTimeRemaining() / 1000);
     }
-    if (!offset) 
+    if (!offset)
         return false;
     spirits_buffer[offset] = 0;
     return true;
@@ -338,23 +426,25 @@ bool TimerWidget::GetDeepTimer() {
 
     if (GW::Map::GetMapID() != MapID::The_Deep) return false;
     if (GW::Map::GetInstanceType() != InstanceType::Explorable) return false;
-    
-    GW::EffectArray effects = GW::Effects::GetPlayerEffectArray();
-    if (!effects.valid()) return false;
+
+    GW::EffectArray* effects = GW::Effects::GetPlayerEffects();
+    if (!effects) return false;
 
     static clock_t start = -1;
     SkillID skill = SkillID::No_Skill;
-    for (DWORD i = 0; i < effects.size() && skill == SkillID::No_Skill; ++i) {
-        SkillID effect_id = (SkillID)effects[i].skill_id;
+    for (auto& effect : *effects) {
+        SkillID effect_id = (SkillID)effect.skill_id;
         switch (effect_id) {
         case SkillID::Aspect_of_Exhaustion:
         case SkillID::Aspect_of_Depletion_energy_loss:
-        case SkillID::Scorpion_Aspect: 
-            skill = effect_id; 
+        case SkillID::Scorpion_Aspect:
+            skill = effect_id;
             break;
         default:
             break;
         }
+        if (skill != SkillID::No_Skill)
+            break;
     }
     if (skill == SkillID::No_Skill) {
         start = -1;
@@ -375,13 +465,13 @@ bool TimerWidget::GetDeepTimer() {
     if (diff > 100) timer = std::min(timer, 30 - ((diff - 100) % 30));
     if (diff > 200) timer = std::min(timer, 30 - ((diff - 200) % 30));
     switch (skill) {
-    case SkillID::Aspect_of_Exhaustion: 
+    case SkillID::Aspect_of_Exhaustion:
         snprintf(extra_buffer, 32, "Exhaustion: %lu", timer);
         break;
-    case SkillID::Aspect_of_Depletion_energy_loss: 
+    case SkillID::Aspect_of_Depletion_energy_loss:
         snprintf(extra_buffer, 32, "Depletion: %lu", timer);
         break;
-    case SkillID::Scorpion_Aspect: 
+    case SkillID::Scorpion_Aspect:
         snprintf(extra_buffer, 32, "Scorpion: %lu", timer);
         break;
     default:
@@ -473,7 +563,7 @@ bool TimerWidget::GetDoATimer() {
         time_since_previous_wave -= CAVE_SPAWN_INTERVALS[i];
         ++currentWave;
     }
-    
+
     if (currentWave >= _countof(CAVE_SPAWN_INTERVALS))
         return false;
 

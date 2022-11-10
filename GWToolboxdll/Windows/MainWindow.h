@@ -6,8 +6,9 @@ class MainWindow : public ToolboxWindow {
     MainWindow() {
         visible = true;
         can_show_in_main_window = false;
-    };
-    ~MainWindow() {};
+    }
+    ~MainWindow() = default;
+
 public:
     static MainWindow& Instance() {
         static MainWindow instance;
@@ -60,5 +61,5 @@ private:
         {"Settings",0.82f}
     };
 protected:
-    const float SettingsWeighting() override { return 1.1f; };
+    float SettingsWeighting() override { return 1.1f; };
 };

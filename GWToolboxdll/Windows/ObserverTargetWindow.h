@@ -8,7 +8,7 @@
 #include <GWCA\GameEntities\Skill.h>
 #include "GWCA\Managers\UIMgr.h"
 
-#include <GuiUtils.h>
+#include <Utils/GuiUtils.h>
 #include <Timer.h>
 #include <ToolboxWindow.h>
 
@@ -17,11 +17,8 @@
 #define NO_AGENT 0
 
 class ObserverTargetWindow : public ObserverPlayerWindow {
-public:
-    ObserverTargetWindow() {};
-    ~ObserverTargetWindow() {
-        //
-    };
+    ObserverTargetWindow() = default;
+    ~ObserverTargetWindow() = default;
 
 public:
     static ObserverTargetWindow& Instance() {
@@ -34,7 +31,7 @@ public:
     uint32_t GetComparison() override;
 
     const char* Name() const override { return "Observer Target"; }
-    const char* Icon() const override { return ICON_FA_EYE; }
+    const char8_t* Icon() const override { return ICON_FA_EYE; }
 
 protected:
     uint32_t current_tracked_agent_id = NO_AGENT;

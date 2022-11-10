@@ -1,10 +1,13 @@
 #pragma once
 
-#include <GWCA/Constants/Maps.h>
+#include <ToolboxUIElement.h>
 
-#include <ToolboxModule.h>
-
-class ToolboxSettings : public ToolboxModule {
+namespace GW {
+    namespace Constants {
+        enum class MapID;
+    }
+}
+class ToolboxSettings : public ToolboxUIElement {
     ToolboxSettings() {};
     ToolboxSettings(const ToolboxSettings&) = delete;
     ~ToolboxSettings() {};
@@ -15,18 +18,20 @@ public:
     }
 
     const char* Name() const override { return "Toolbox Settings"; }
-
-    const char* Icon() const override { return ICON_FA_TOOLBOX;  }
+    const char8_t* Icon() const override { return ICON_FA_TOOLBOX;  }
 
     void LoadModules(CSimpleIni* ini);
-    
+
     void Update(float delta) override;
 
     void LoadSettings(CSimpleIni* ini) override;
     void SaveSettings(CSimpleIni* ini) override;
     void DrawSettingInternal() override;
+    void Draw(IDirect3DDevice9*) override;
+    void ShowVisibleRadio() override { };
 
     void DrawFreezeSetting();
+    void DrawSizeAndPositionSettings() override {}
 
     const std::vector<ToolboxModule*>& GetOptionalModules() const { return optional_modules; }
 
@@ -35,7 +40,7 @@ public:
 private:
     // === location stuff ===
     clock_t location_timer = 0;
-    GW::Constants::MapID location_current_map = GW::Constants::MapID::None;
+    GW::Constants::MapID location_current_map = (GW::Constants::MapID)0;
     std::wofstream location_file;
     bool save_location_data = false;
 
@@ -62,6 +67,8 @@ private:
     bool use_notepad = true;
     bool use_vanquish = true;
     bool use_alcohol = true;
+    bool use_world_map = true;
+    bool use_effect_monitor = true;
     bool use_objectivetimer = true;
     bool use_observer = false;
     bool use_observer_player_window = false;
@@ -78,7 +85,13 @@ private:
     bool use_gamesettings = true;
     bool use_updater = true;
     bool use_chatfilter = true;
+    bool use_itemfilter = true;
     bool use_chatcommand = true;
     bool use_discordintegration = false;
     bool use_obfuscator = true;
+    bool use_completion_window = true;
+    bool use_reroll_window = true;
+    bool use_party_statistics = true;
+    bool use_latency_widget = true;
+    bool use_skill_monitor = true;
 };

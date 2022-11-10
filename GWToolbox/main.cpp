@@ -1,5 +1,7 @@
 #include "stdafx.h"
 
+#include <cstdio>
+
 #include <Path.h>
 #include <RestClient.h>
 
@@ -37,18 +39,30 @@ static bool InjectInstalledDllInProcess(Process *process)
         return true;
     }
 
-    wchar_t dllpath[MAX_PATH];
-    if (settings.localdll) {
-        PathGetProgramDirectory(dllpath, MAX_PATH);
-    } else if (!GetInstallationLocation(dllpath, MAX_PATH)) {
+    std::filesystem::path dllpath;
+    if (!PathGetProgramDirectory(dllpath)) {
+        if (settings.localdll) {
+            return false;
+        }
+    }
+    const std::filesystem::path localdll = dllpath / L"GWToolboxdll.dll";
+    if (std::filesystem::exists(localdll)) {
+        dllpath = localdll;
+    } else if (settings.localdll) {
+        return false;
+    }
+    else if (!PathGetDocumentsPath(dllpath, L"GWToolboxpp\\GWToolboxdll.dll")) {
         fprintf(stderr, "Couldn't find installation path\n");
         return false;
     }
 
-    PathCompose(dllpath, MAX_PATH, dllpath, L"GWToolboxdll.dll");
+    if (!std::filesystem::exists(dllpath)) {
+        fprintf(stderr, "No GWToolboxdll.dll file exists.\n");
+        return false;
+    }
 
     DWORD ExitCode;
-    if (!InjectRemoteThread(process, dllpath, &ExitCode)) {
+    if (!InjectRemoteThread(process, dllpath.wstring().c_str(), &ExitCode)) {
         fprintf(stderr, "InjectRemoteThread failed (ExitCode: %lu)\n", ExitCode);
         return false;
     }
@@ -64,7 +78,7 @@ static bool SetProcessForeground(Process *process)
         return false;
     }
 
-    DWORD ProcessId = process->GetProcessId();
+    const DWORD ProcessId = process->GetProcessId();
 
     while (hWndIt != nullptr) {
         DWORD WindowPid;
@@ -88,16 +102,30 @@ static bool SetProcessForeground(Process *process)
 #ifdef _DEBUG
 int main()
 #else
-INT WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
-    PSTR lpCmdLine, INT nCmdShow)
+int WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nShowCmd)
 #endif
 {
+    std::filesystem::path log_file_path;
+    if (!PathGetExeFullPath(log_file_path)) {
+        MessageBoxW(0, L"Failed to get qualified path for logs file.", L"GWToolbox", MB_OK | MB_TOPMOST);
+        return 0;
+    }
+    log_file_path = log_file_path.parent_path() / L"GWToolbox.error.log";
+    if (!freopen(log_file_path.string().c_str(), "w", stderr)) {
+        wchar_t buf[MAX_PATH + 128];
+        swprintf(buf, MAX_PATH + 128,
+            L"Failed to open log file for writing:\n\n%s\n\nEnsure you have write permissions to this folder.",
+            log_file_path.wstring().c_str());
+        MessageBoxW(0, buf, L"GWToolbox", MB_OK | MB_TOPMOST);
+        return 0;
+    }
+
     ParseRegSettings();
     ParseCommandLine();
 
     assert(settings.help == false);
     if (settings.version) {
-        printf("GWToolbox version 3.0\n");
+        printf("GWToolbox version %s\n", GWTOOLBOXEXE_VERSION);
         return 0;
     }
 
@@ -111,10 +139,12 @@ INT WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
     if (settings.install) {
         Install(settings.quiet);
         return 0;
-    } else if (settings.uninstall) {
+    }
+    if (settings.uninstall) {
         Uninstall(settings.quiet);
         return 0;
-    } else if (settings.reinstall) {
+    }
+    if (settings.reinstall) {
         // @Enhancement:
         // Uninstall shouldn't remove the existing data, that would instead be a
         // "repair" or something along those lines.
@@ -137,7 +167,7 @@ INT WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
             MB_YESNO);
 
         if (iRet == IDNO) {
-            fprintf(stderr, "Use doesn't want to install GWToolbox\n");
+            fprintf(stderr, "User doesn't want to install GWToolbox\n");
             return 1;
         }
 
@@ -172,10 +202,10 @@ INT WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 
         return 0;
     }
-    
+
     // If we can't open with appropriate rights, we can then ask to re-open
     // as admin.
-    InjectReply reply = InjectWindow::AskInjectProcess(&proc);
+    const InjectReply reply = InjectWindow::AskInjectProcess(&proc);
 
     if (reply == InjectReply_Cancel) {
         fprintf(stderr, "InjectReply_Cancel\n");
@@ -188,7 +218,7 @@ INT WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
             L"Couldn't find character name RVA.\n"
             L"You need to update the launcher or contact the developpers.",
             L"GWToolbox - Error",
-            MB_OK | MB_ICONERROR);
+            MB_OK | MB_ICONERROR | MB_TOPMOST);
         return 1;
     }
 
@@ -208,7 +238,7 @@ INT WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
                 L"If such process exist GWToolbox.exe may require administrator privileges.\n"
                 L"Do you want to restart as administrator?",
                 L"GWToolbox - Error",
-                MB_YESNO);
+                MB_YESNO | MB_TOPMOST);
 
             if (iRet == IDNO) {
                 fprintf(stderr, "User doesn't want to restart as admin\n");
@@ -227,7 +257,7 @@ INT WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
             L"Couldn't find any valid process to start GWToolboxpp.\n"
             L"Ensure Guild Wars is running before trying to run GWToolbox.\n",
             L"GWToolbox - Error",
-            MB_RETRYCANCEL);
+            MB_RETRYCANCEL | MB_TOPMOST);
         if (iRet == IDCANCEL) {
             fprintf(stderr, "User doesn't want to retry\n");
             return 1;

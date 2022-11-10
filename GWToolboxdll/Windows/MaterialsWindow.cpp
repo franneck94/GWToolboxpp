@@ -2,42 +2,26 @@
 
 #include <GWCA/Constants/Constants.h>
 #include <GWCA/GameContainers/Array.h>
-#include <GWCA/GameContainers/GamePos.h>
 #include <GWCA/Packets/StoC.h>
 
 #include <GWCA/GameEntities/Item.h>
-
-#include <GWCA/Context/GameContext.h>
-#include <GWCA/Context/WorldContext.h>
 
 #include <GWCA/Managers/ItemMgr.h>
 #include <GWCA/Managers/StoCMgr.h>
 #include <GWCA/Managers/MerchantMgr.h>
 
-#include <GuiUtils.h>
-#include <Logger.h>
+#include <Utils/GuiUtils.h>
 
 #include <Modules/Resources.h>
 #include <Windows/MaterialsWindow.h>
 
 static const DWORD MIN_TIME_BETWEEN_RETRY = 160; // 10 frames
 
-GW::MerchItemArray MaterialsWindow::GetMerchItems() const {
-    GW::MerchItemArray items = {};
-    GW::GameContext *game_ctx = GW::GameContext::instance();
-    if (!(game_ctx && game_ctx->world)) return items;
-    return game_ctx->world->merch_items;
-}
-
 GW::Item *MaterialsWindow::GetMerchItem(Material mat) const {
     uint32_t model_id = GetModelID(mat);
-    GW::ItemArray items = GW::Items::GetItemArray();
     for (uint32_t item_id : merch_items) {
-        if (item_id >= items.size())
-            continue;
-        GW::Item *item = items[item_id];
-        if (!item) continue;
-        if (item->model_id == model_id)
+        GW::Item* item = GW::Items::GetItemById(item_id);
+        if (item && item->model_id == model_id)
             return item;
     }
     return nullptr;
@@ -67,7 +51,7 @@ GW::Item *MaterialsWindow::GetBagItem(Material mat) const {
 void MaterialsWindow::Update(float delta) {
     UNREFERENCED_PARAMETER(delta);
     if (cancelled) return;
-    DWORD tickcount = GetTickCount();
+    const auto tickcount = GetTickCount();
     if (quote_pending && (tickcount < quote_pending_time)) return;
     if (trans_pending && (tickcount < trans_pending_time)) return;
     if (transactions.empty()) return;
@@ -94,17 +78,12 @@ bool MaterialsWindow::GetIsInProgress() {
 
 void MaterialsWindow::Initialize() {
     ToolboxWindow::Initialize();
-
-    Resources::Instance().LoadTextureAsync(&tex_essence, Resources::GetPath(L"img\\icons", L"Essence_of_Celerity.png"), 
-        IDB_Pcons_Essence);
-    Resources::Instance().LoadTextureAsync(&tex_grail, Resources::GetPath(L"img\\icons", L"Grail_of_Might.png"), 
-        IDB_Pcons_Grail);
-    Resources::Instance().LoadTextureAsync(&tex_armor, Resources::GetPath(L"img\\icons", L"Armor_of_Salvation.png"), 
-        IDB_Pcons_Armor);
-    Resources::Instance().LoadTextureAsync(&tex_powerstone, Resources::GetPath(L"img\\icons", L"Powerstone_of_Courage.png"), 
-        IDB_Mat_Powerstone);
-    Resources::Instance().LoadTextureAsync(&tex_resscroll, Resources::GetPath(L"img\\icons", L"Scroll_of_Resurrection.png"), 
-        IDB_Mat_ResScroll);
+    
+    tex_essence = Resources::GetItemImage(L"Essence of Celerity");
+    tex_grail = Resources::GetItemImage(L"Grail of Might");
+    tex_armor = Resources::GetItemImage(L"Armor of Salvation");
+    tex_powerstone = Resources::GetItemImage(L"Powerstone of Courage");
+    tex_resscroll = Resources::GetItemImage(L"Scroll of Resurrection");
     
     for (int i = 0; i < N_MATS; ++i) {
         price[i] = PRICE_DEFAULT;
@@ -184,20 +163,18 @@ void MaterialsWindow::Initialize() {
     [this](GW::HookStatus *, GW::Packet::StoC::ItemStreamEnd *pak) -> void {
         // @Remark: unk1 = 13 means "selling" tab
         if (pak->unk1 != 12) return;
-        GW::MerchItemArray items = GetMerchItems();
+        GW::MerchItemArray* items = GW::Merchant::GetMerchantItemsArray();
         merch_items.clear();
-        for (size_t i = 0; i < items.size(); i++)
-            merch_items.push_back(items[i]);
+        if (items) {
+            for (const auto item_id : *items)
+                merch_items.push_back(item_id);
+        }
+
     });
 }
 
 void MaterialsWindow::Terminate() {
     ToolboxWindow::Terminate();
-    if (tex_essence) tex_essence->Release(); tex_essence = nullptr;
-    if (tex_grail) tex_grail->Release(); tex_grail = nullptr;
-    if (tex_armor) tex_armor->Release(); tex_armor = nullptr;
-    if (tex_powerstone) tex_powerstone->Release(); tex_powerstone = nullptr;
-    if (tex_resscroll) tex_resscroll->Release(); tex_resscroll = nullptr;
 }
 
 void MaterialsWindow::LoadSettings(CSimpleIni* ini) {
@@ -229,7 +206,7 @@ void MaterialsWindow::Draw(IDirect3DDevice9* pDevice) {
         // while minimizing the rescaling
 
         // === Essence ===
-        ImGui::Image((ImTextureID)tex_essence, ImVec2(50, 50),
+        ImGui::Image((ImTextureID)*tex_essence, ImVec2(50, 50),
             ImVec2(4.0f / 64, 9.0f / 64), ImVec2(47.0f / 64, 52.0f / 64));
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Essence of Celerity\nFeathers and Dust");
         ImGui::SameLine();
@@ -242,7 +219,7 @@ void MaterialsWindow::Draw(IDirect3DDevice9* pDevice) {
             EnqueueQuote(Feather);
             EnqueueQuote(PileofGlitteringDust);
         }
-        h = ImGui::GetCurrentWindow()->DC.LastItemRect.GetHeight();
+        h = ImGui::GetCurrentContext()->LastItemData.Rect.GetHeight();
         static int qty_essence = 1;
         ImGui::SetCursorPosX(x);
         ImGui::SetCursorPosY(y + h + ImGui::GetStyle().ItemSpacing.y);
@@ -268,7 +245,7 @@ void MaterialsWindow::Draw(IDirect3DDevice9* pDevice) {
 
         ImGui::Separator();
         // === Grail ===
-        ImGui::Image((ImTextureID)tex_grail, ImVec2(50, 50),
+        ImGui::Image((ImTextureID)*tex_grail, ImVec2(50, 50),
             ImVec2(3.0f / 64, 11.0f / 64), ImVec2(49.0f / 64, 57.0f / 64));
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Grail of Might\nIron and Dust");
         ImGui::SameLine();
@@ -281,7 +258,7 @@ void MaterialsWindow::Draw(IDirect3DDevice9* pDevice) {
             EnqueueQuote(IronIngot);
             EnqueueQuote(PileofGlitteringDust);
         }
-        h = ImGui::GetCurrentWindow()->DC.LastItemRect.GetHeight();
+        h = ImGui::GetCurrentContext()->LastItemData.Rect.GetHeight();
         static int qty_grail = 1;
         ImGui::SetCursorPosX(x);
         ImGui::SetCursorPosY(y + h + ImGui::GetStyle().ItemSpacing.y);
@@ -307,7 +284,7 @@ void MaterialsWindow::Draw(IDirect3DDevice9* pDevice) {
 
         ImGui::Separator();
         // === Armor ===
-        ImGui::Image((ImTextureID)tex_armor, ImVec2(50, 50),
+        ImGui::Image((ImTextureID)*tex_armor, ImVec2(50, 50),
             ImVec2(0, 1.0f / 64), ImVec2(59.0f / 64, 60.0f / 64));
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Armor of Salvation\nIron and Bones");
         ImGui::SameLine();
@@ -320,7 +297,7 @@ void MaterialsWindow::Draw(IDirect3DDevice9* pDevice) {
             EnqueueQuote(IronIngot);
             EnqueueQuote(Bone);
         }
-        h = ImGui::GetCurrentWindow()->DC.LastItemRect.GetHeight();
+        h = ImGui::GetCurrentContext()->LastItemData.Rect.GetHeight();
         static int qty_armor = 1;
         ImGui::SetCursorPosX(x);
         ImGui::SetCursorPosY(y + h + ImGui::GetStyle().ItemSpacing.y);
@@ -346,7 +323,7 @@ void MaterialsWindow::Draw(IDirect3DDevice9* pDevice) {
 
         ImGui::Separator();
         // === Powerstone ===
-        ImGui::Image((ImTextureID)tex_powerstone, ImVec2(50, 50),
+        ImGui::Image((ImTextureID)*tex_powerstone, ImVec2(50, 50),
             ImVec2(0, 6.0f / 64), ImVec2(54.0f / 64, 60.0f / 64));
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Powerstone of Courage\nGranite and Dust");
         ImGui::SameLine();
@@ -358,7 +335,7 @@ void MaterialsWindow::Draw(IDirect3DDevice9* pDevice) {
             EnqueueQuote(GraniteSlab);
             EnqueueQuote(PileofGlitteringDust);
         }
-        h = ImGui::GetCurrentWindow()->DC.LastItemRect.GetHeight();
+        h = ImGui::GetCurrentContext()->LastItemData.Rect.GetHeight();
         static int qty_pstone = 1;
         ImGui::SetCursorPosX(x);
         ImGui::SetCursorPosY(y + h + ImGui::GetStyle().ItemSpacing.y);
@@ -384,7 +361,7 @@ void MaterialsWindow::Draw(IDirect3DDevice9* pDevice) {
 
         ImGui::Separator();
         // === Res scroll ===
-        ImGui::Image((ImTextureID)tex_resscroll, ImVec2(50, 50),
+        ImGui::Image((ImTextureID)*tex_resscroll, ImVec2(50, 50),
             ImVec2(1.0f / 64, 4.0f / 64), ImVec2(56.0f / 64, 59.0f / 64));
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Scroll of Resurrection\nFibers and Bones");
         ImGui::SameLine();
@@ -396,7 +373,7 @@ void MaterialsWindow::Draw(IDirect3DDevice9* pDevice) {
             EnqueueQuote(PlantFiber);
             EnqueueQuote(Bone);
         }
-        h = ImGui::GetCurrentWindow()->DC.LastItemRect.GetHeight();
+        h = ImGui::GetCurrentContext()->LastItemData.Rect.GetHeight();
         static int qty_resscroll = 1;
         ImGui::SetCursorPosX(x);
         ImGui::SetCursorPosY(y + h + ImGui::GetStyle().ItemSpacing.y);
@@ -423,7 +400,7 @@ void MaterialsWindow::Draw(IDirect3DDevice9* pDevice) {
         ImGui::Separator();
 
         float width2 = 100.0f;
-        float width1 = (ImGui::GetWindowContentRegionWidth() - width2 - 100.0f - ImGui::GetStyle().ItemSpacing.x * 2);
+        float width1 = (ImGui::GetContentRegionAvail().x - width2 - 100.0f - ImGui::GetStyle().ItemSpacing.x * 2);
 
         // === generic materials ===
         static int common_idx = 0;

@@ -7,7 +7,7 @@
 #include <GWCA\GameEntities\Skill.h>
 #include "GWCA\Managers\UIMgr.h"
 
-#include <GuiUtils.h>
+#include <Utils/GuiUtils.h>
 #include <Timer.h>
 #include <ToolboxWindow.h>
 #include <Color.h>
@@ -15,14 +15,8 @@
 #define NO_AGENT 0
 
 class ObserverPartyWindow : public ToolboxWindow {
-public:
-    //
-
-private:
-    ObserverPartyWindow() {};
-    ~ObserverPartyWindow() {
-        //
-    };
+    ObserverPartyWindow() = default;
+    ~ObserverPartyWindow() = default;
 
 public:
     static ObserverPartyWindow& Instance() {
@@ -31,7 +25,7 @@ public:
     }
 
     const char* Name() const override { return "Observer Parties"; }
-    const char* Icon() const override { return ICON_FA_EYE; }
+    const char8_t* Icon() const override { return ICON_FA_EYE; }
     void Draw(IDirect3DDevice9* pDevice) override;
     void Initialize() override;
 
@@ -70,6 +64,7 @@ protected:
     bool show_dealt_party_crits = true;
     bool show_received_party_skills = true;
     bool show_dealt_party_skills = true;
+    bool show_skills_used = true;
 
 private:
     // ini

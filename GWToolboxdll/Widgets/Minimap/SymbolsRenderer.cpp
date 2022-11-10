@@ -7,11 +7,13 @@
 
 #include <GWCA/GameEntities/Quest.h>
 #include <GWCA/GameEntities/Party.h>
+#include <GWCA/GameEntities/Agent.h>
 
 #include <GWCA/Context/GameContext.h>
 #include <GWCA/Context/WorldContext.h>
 
 #include <GWCA/Managers/AgentMgr.h>
+#include <GWCA/Managers/PlayerMgr.h>
 
 #include <ImGuiAddons.h>
 
@@ -118,57 +120,43 @@ void SymbolsRenderer::Render(IDirect3DDevice9* device) {
     static float tau = 0.0f;
     float fps = ImGui::GetIO().Framerate;
     // tau of += 0.05f is good for 60 fps, adapt that for any
-    // note: framerate is a moving average of the last 120 frames, so it won't adapt quickly. 
+    // note: framerate is a moving average of the last 120 frames, so it won't adapt quickly.
     // when the framerate changes a lot, the quest marker may speed up or down for a bit.
     tau += (0.05f * 60.0f / std::max(fps, 1.0f));
     if (tau > 10 * PI) tau -= 10 * PI;
-    D3DXMATRIX translate, scale, rotate, world;
+    DirectX::XMMATRIX translate, world;
 
-    
-    GW::QuestLog qlog = GW::GameContext::instance()->world->quest_log;
-    DWORD qid = GW::GameContext::instance()->world->active_quest_id;
-    if (qlog.valid() && qid > 0) {
-        GW::Vec2f qpos(0, 0);
-        bool qfound = false;
-        for (unsigned int i = 0; i < qlog.size(); ++i) {
-            GW::Quest q = qlog[i];
-            if (q.quest_id == qid) {
-                qpos = GW::Vec2f(q.marker.x, q.marker.y);
-                qfound = true;
-                break;
-            }
-        }
+    if (const GW::Quest* quest = GW::PlayerMgr::GetActiveQuest()) {
+        const GW::Vec2f qpos = { quest->marker.x, quest->marker.y };
+        const float compass_scale = Minimap::Instance().Scale();
+        const float marker_scale = (1.0f / compass_scale);
+        auto rotate = DirectX::XMMatrixRotationZ(-tau / 5);
+        DirectX::XMMATRIX scale = DirectX::XMMatrixScaling(marker_scale + std::sin(tau) * 0.3f * marker_scale,
+                                                           marker_scale + std::sin(tau) * 0.3f * marker_scale, 1.0f);
+        translate = DirectX::XMMatrixTranslation(qpos.x, qpos.y, 0);
+        world = rotate * scale * translate;
+        device->SetTransform(D3DTS_WORLD, reinterpret_cast<const D3DMATRIX*>(&world));
+        device->DrawPrimitive(type, star_offset, star_ntriangles);
 
-        if (qfound) {
-            const float compass_scale = Minimap::Instance().Scale();
-            const float marker_scale = (1.0f / compass_scale);
-            D3DXMatrixRotationZ(&rotate, -tau / 5);
-            D3DXMatrixScaling(&scale, marker_scale + std::sin(tau) * 0.3f * marker_scale, marker_scale + std::sin(tau) * 0.3f * marker_scale, 1.0f);
-            D3DXMatrixTranslation(&translate, qpos.x, qpos.y, 0);
+        GW::Vec2f mypos = me->pos;
+        GW::Vec2f v = qpos - mypos;
+        const float max_quest_range = (GW::Constants::Range::Compass - 250.0f) / compass_scale;
+        const float max_quest_range_sqr = max_quest_range * max_quest_range;
+        if (GW::GetSquaredNorm(v) > max_quest_range_sqr) {
+            v = GW::Normalize(v) * max_quest_range;
+
+            float angle = std::atan2(v.y, v.x);
+            rotate = DirectX::XMMatrixRotationZ(angle - static_cast<float>(M_PI_2));
+            scale = DirectX::XMMatrixScaling(marker_scale + std::sin(tau) * 0.3f * marker_scale, marker_scale + std::sin(tau) * 0.3f * marker_scale, 1.0f);
+            translate = DirectX::XMMatrixTranslation(me->pos.x + v.x, me->pos.y + v.y, 0);
             world = rotate * scale * translate;
-            device->SetTransform(D3DTS_WORLD, &world);
-            device->DrawPrimitive(type, star_offset, star_ntriangles);
-
-            GW::Vec2f mypos = me->pos;
-            GW::Vec2f v = qpos - mypos;
-            const float max_quest_range = (GW::Constants::Range::Compass - 250.0f) / compass_scale;
-            const float max_quest_range_sqr = max_quest_range * max_quest_range;
-            if (GW::GetSquaredNorm(v) > max_quest_range_sqr) {
-                v = GW::Normalize(v) * max_quest_range;
-                
-                float angle = std::atan2(v.y, v.x);
-                D3DXMatrixRotationZ(&rotate, angle - (float)M_PI_2);
-                D3DXMatrixScaling(&scale, marker_scale + std::sin(tau) * 0.3f * marker_scale, marker_scale + std::sin(tau) * 0.3f * marker_scale, 1.0f);
-                D3DXMatrixTranslation(&translate, me->pos.x + v.x, me->pos.y + v.y, 0);
-                world = rotate * scale * translate;
-                device->SetTransform(D3DTS_WORLD, &world);
-                device->DrawPrimitive(type, arrow_offset, arrow_ntriangles);
-            }
+            device->SetTransform(D3DTS_WORLD, reinterpret_cast<const D3DMATRIX*>(&world));
+            device->DrawPrimitive(type, arrow_offset, arrow_ntriangles);
         }
     }
 
-    D3DXMatrixTranslation(&translate, me->pos.x, me->pos.y + 5000.0f, 0);
+    translate = DirectX::XMMatrixTranslation(me->pos.x, me->pos.y + 5000.0f, 0);
     world = translate;
-    device->SetTransform(D3DTS_WORLD, &world);
+    device->SetTransform(D3DTS_WORLD, reinterpret_cast<const D3DMATRIX*>(&world));
     device->DrawPrimitive(type, north_offset, north_ntriangles);
 }

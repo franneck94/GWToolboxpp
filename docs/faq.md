@@ -63,12 +63,6 @@ This error typically means that some security feature is preventing Toolbox to a
 Oops. Please start a bug issue at the repository issue tracker <a href="{{ site.github.issues_url }}">here</a>. If the error was not critical, a message box should have displayed with the title “GWToolbox++ Crash!”. If the message box states that the dump file generated sucessfully, please go to your start menu search bar and type %LOCALAPPDATA%. Press enter, and your appdata folder should open. Navigate to the GWToolboxpp folder and find the most recent .dmp file created. If you are able to find the file, attach this file on your issue as it can help greatly with fixing the issue. Be sure to also include what you were doing in game at the time of the crash, and any other information that might help. If it is an issue we can solve we will get to fixing it when we can.
 
 ## In-game issues and how-to
-**How do I target a Boo!?** \\
-You can use Toolbox to target and interact with lots of agents that wouldn't normally be targetable. There are a couple of ways to do this:
-
-* `Ctrl+click` on the [minimap](minimap). You can target agents that aren't visible, so long as you know where they are.
-* Use the [Info](info) window to find the ID of the agent (a Boo! is 7445), and then create a [hotkey](hotkeys) to target it.
-* The chat command `/target closest` will work, so long as the Boo! is the nearest agent, which should generally be the case.
 
 **Can I bind the same hotkey to perform multiple actions?** \\
 You sure can! Just create a second hotkey for the second action and assign the same key bind. When you press the key, you will perform all of the assigned actions in the order the hotkeys appear in the list.
@@ -77,6 +71,12 @@ You can also bind multiple keys to the same action, again by creating extra hotk
 
 **The icons on the [Pcons](pcons), [Materials](materials), and [Toolbox](windows#toolbox_window) window aren't showing up. How do I get them back?** \\
 This is a bug that causes the Toolbox launcher to not download the icons. Delete your `GWToolbox.exe` and replace it with [this one](https://github.com/HasKha/GWToolboxpp/releases/download/2.0-launcher/GWToolbox.exe).
+
+**Toolbox cannot load font upon launch. How do I get it to load the font?** \\
+`Font.ttf` can be found in the GitHub repository in the resource folder. Download [this file](https://github.com/HasKha/GWToolboxpp/blob/master/resources/Font.ttf) and navigate to `C:\Users\[Username]\AppData\Local\GWToolboxpp` and copy it to that folder.
+
+**I am missing icons in my Completion window. Help?** \\
+Missing icons are most likely not downloaded into your `C:\Users\%USERNAME%\Documents\GWToolboxpp\%COMPUTERNAME%\img` folder. All of the icons can be found in the [resources folder](https://github.com/HasKha/GWToolboxpp/tree/master/resources) in the GitHub repository where you can download them. By navigating to a single file, you will in most cases find a download button to download the individual file. If you are missing a lot of icons, you can download the repository from the [main page](https://github.com/HasKha/GWToolboxpp). Click *Code* and Download *Zip*. From the .zip-file, navigate to `GWToolboxpp-master.zip\GWToolboxpp-master\resources\` and drop the needed icon folder into `C:\Users\[Username]\AppData\Local\GWToolboxpp\img`.
 
 **Why isn't Toolbox remembering my settings when I restart! Help?** \\
 Toolbox settings are saved to the files in the [settings folder](settings#storage) when you close Toolbox or click "Save Now" at the bottom of the [Settings window](settings). Settings are loaded from those files when you launch Toolbox or click "Load Now".
@@ -87,7 +87,7 @@ Toolbox settings are saved to the files in the [settings folder](settings#storag
 **My Toolbox is not showing! Help?** \\
 There are a few different things that could have happened. Here's how to fix them:
 * Enter `/tb reset` and `/show settings`, in case you just moved the windows off-screen or hid all windows.
-* Enter `/tb exit` to close Toolbox, open the `theme.ini` file in `C:\Users\[User]\Appdata\GWToolboxpp`, and delete the line that says `GlobalAlpha`. Save the file and restart Toolbox.
+* Enter `/tb exit` to close Toolbox, open the `theme.ini` file in `C:\Users\%USERNAME%\Documents\GWToolboxpp\%COMPUTERNAME%`, and delete the line that says `GlobalAlpha`. Save the file and restart Toolbox.
 
 **One of my windows has collapsed! I can only see the title bar. How do I get the window back?** \\
 You probably minimized it by accident. Double-click on the title bar to expand it, or to collapse it again.

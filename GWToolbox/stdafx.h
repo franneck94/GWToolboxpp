@@ -30,15 +30,19 @@
 #include <psapi.h>
 
 #include <assert.h>
-#include <stdint.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <fstream>
+#include <string>
 #include <time.h>
 
 #include <atomic>
 #include <string>
 #include <vector>
+#include <algorithm>
+#include <ranges>
+#include <regex>
 
 #include <nlohmann/json.hpp>
 

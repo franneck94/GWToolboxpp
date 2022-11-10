@@ -1,47 +1,34 @@
-
 #pragma once
 
-#include <GWCA\Constants\Constants.h>
+#include <GWCA/Constants/Constants.h>
 
-#include <GWCA\GameContainers\Array.h>
-
-#include <GWCA\GameEntities\Skill.h>
-#include <GWCA\GameEntities\Agent.h>
-
-#include <GWCA/Managers/AgentMgr.h>
-#include "GWCA\Managers\UIMgr.h"
-
-#include <GuiUtils.h>
-#include <Timer.h>
 #include <ToolboxWindow.h>
 
 #define NO_AGENT 0
 
 class ObserverPlayerWindow : public ToolboxWindow {
-public:
-    ObserverPlayerWindow() {};
-    ~ObserverPlayerWindow() {
-        //
-    };
+protected:
+    ObserverPlayerWindow() = default;
+    ~ObserverPlayerWindow() = default;
 
+public:
     static ObserverPlayerWindow& Instance() {
         static ObserverPlayerWindow instance;
         return instance;
     }
 
+    virtual void Prepare() {}
+    virtual uint32_t GetTracking();
+    virtual uint32_t GetComparison();
 
+    void DrawHeaders() const;
+    void DrawAction(const std::string& name, const ObserverModule::ObservedAction* action);
 
-    virtual void ObserverPlayerWindow::Prepare(){};
-    virtual uint32_t ObserverPlayerWindow::GetTracking();
-    virtual uint32_t ObserverPlayerWindow::GetComparison();
+    void DrawSkills(const std::unordered_map<GW::Constants::SkillID, ObserverModule::ObservedSkill*>& skills,
+        const std::vector<GW::Constants::SkillID>& skill_ids);
 
-    void DrawSkillHeaders();
-
-    void DrawSkills(const std::unordered_map<uint32_t, ObserverModule::ObservedSkill*>& skills,
-        const std::vector<uint32_t>& skill_ids);
-
-    const char* Name() const override { return "Observer Player"; };
-    const char* Icon() const override { return ICON_FA_EYE; }
+    const char* Name() const override { return "Observer Player"; }
+    const char8_t* Icon() const override { return ICON_FA_EYE; }
     void Draw(IDirect3DDevice9* pDevice) override;
     void Initialize() override;
 
@@ -60,4 +47,10 @@ protected:
     bool show_tracking = true;
     bool show_comparison = true;
     bool show_skills_used_on_self = true;
+
+    bool show_attempts = false;
+    bool show_cancels = true;
+    bool show_interrupts = true;
+    bool show_finishes = true;
+    bool show_integrity = false;
 };

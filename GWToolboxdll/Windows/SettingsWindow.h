@@ -6,7 +6,7 @@ class SettingsWindow : public ToolboxWindow {
     SettingsWindow() {
         show_menubutton = true;
     };
-    ~SettingsWindow() {};
+    ~SettingsWindow() = default;
 public:
     static SettingsWindow& Instance() {
         static SettingsWindow instance;
@@ -14,7 +14,7 @@ public:
     }
 
     const char* Name() const override { return "Settings"; }
-    const char* Icon() const override { return ICON_FA_COGS; }
+    const char8_t* Icon() const override { return ICON_FA_COGS; }
 
     void LoadSettings(CSimpleIni* ini) override;
     void SaveSettings(CSimpleIni* ini) override;

@@ -83,16 +83,17 @@ void AprilFools::SetEnabled(bool is_enabled) {
         return;
     enabled = is_enabled;
     if (enabled) {
-        GW::PlayerArray players = GW::Agents::GetPlayerArray();
-        for (uint32_t i = 0; players.valid() && i < players.size(); i++) {
-            auto agent = GW::Agents::GetAgentByID(players[i].agent_id);
+        GW::PlayerArray* players = GW::Agents::GetPlayerArray();
+        if (!players) return;
+        for (auto& player : *players) {
+            auto agent = GW::Agents::GetAgentByID(player.agent_id);
             if (agent)
-                player_agents.emplace(players[i].agent_id, agent);
+                player_agents.emplace(player.agent_id, agent);
         }
         Log::Info("April Fools 2020 enabled. Type '/aprilfools' to disable it");
     }
     else {
-        for (auto agent : player_agents) {
+        for (const auto& agent : player_agents) {
             SetInfected(agent.second, false);
         }
         player_agents.clear();
@@ -105,7 +106,7 @@ void AprilFools::SetInfected(GW::Agent* agent,bool is_infected) {
         GW::GameThread::Enqueue([agent_id]() {
             GW::Packet::StoC::GenericValue packet;
             packet.agent_id = agent_id;
-            packet.Value_id = 7; // Remove effect
+            packet.value_id = 7; // Remove effect
             packet.value = 26; // Disease
             GW::StoC::EmulatePacket(&packet);
             });
@@ -120,7 +121,7 @@ void AprilFools::SetInfected(GW::Agent* agent,bool is_infected) {
     GW::GameThread::Enqueue([agent_id]() {
         GW::Packet::StoC::GenericValue packet;
         packet.agent_id = agent_id;
-        packet.Value_id = 6; // Add effect
+        packet.value_id = 6; // Add effect
         packet.value = 26; // Disease
         GW::StoC::EmulatePacket(&packet);
         GW::Packet::StoC::SpeechBubble packet2;

@@ -1,16 +1,33 @@
 #pragma once
 
-#include "CustomRenderer.h"
+#include <GWCA/Utilities/Hook.h>
 
-#include <GWCA/GameEntities/Agent.h>
+#include <GWCA/GameContainers/GamePos.h>
 
-#include <Color.h>
 #include <Widgets/Minimap/VBuffer.h>
 
+namespace GW {
+    struct Agent;
+    namespace UI {
+        enum class UIMessage : uint32_t;
+    }
+}
+typedef uint32_t Color;
 class AgentRenderer : public VBuffer {
+    static constexpr int num_triangles = 32;
+
 public:
     AgentRenderer();
-    virtual ~AgentRenderer();
+    virtual ~AgentRenderer() {
+        for (const CustomAgent* ca : custom_agents) {
+            delete ca;
+        }
+        custom_agents.clear();
+        custom_agents_map.clear();
+    }
+
+    void Invalidate() override;
+    static AgentRenderer& Instance();
 
     void Render(IDirect3DDevice9* device) override;
 
@@ -25,10 +42,14 @@ public:
 
     bool show_hidden_npcs = false;
     bool boss_colors = true;
+    uint32_t agent_border_thickness = 0;
+
     uint32_t auto_target_id = 0;
 
 private:
-    static const size_t shape_size = 4;
+    static AgentRenderer* instance;
+
+    static constexpr size_t shape_size = 4;
     enum Shape_e { Tear, Circle, Quad, BigCircle };
     enum Color_Modifier {
         None, // rgb 0,0,0
@@ -38,7 +59,6 @@ private:
     };
 
     class CustomAgent {
-    private:
         static unsigned int cur_ui_id;
     public:
         enum class Operation {
@@ -68,15 +88,17 @@ private:
 
         // attributes to change
         Color color = 0xFFF00000;
+        Color color_text = 0xFFF00000;
         Shape_e shape = Tear;
         float size = 0.0f;
         bool color_active = true;
+        bool color_text_active = false;
         bool shape_active = true;
-        bool size_active = true;
+        bool size_active = false;
     };
 
     struct Shape_Vertex : public GW::Vec2f {
-        Shape_Vertex(float x, float y, Color_Modifier mod) 
+        Shape_Vertex(float x, float y, Color_Modifier mod)
             : GW::Vec2f(x, y), modifier(mod) {}
         Color_Modifier modifier;
     };
@@ -138,14 +160,17 @@ private:
     void BuildCustomAgentsMap();
     //const CustomAgent* FindValidCustomAgent(DWORD modelid) const;
 
-    float size_default = 0.f;
-    float size_player = 0.f;
-    float size_signpost = 0.f;
-    float size_item = 0.f;
-    float size_boss = 0.f;
-    float size_minion = 0.f;
+    float size_default = 75.f;
+    float size_player = 100.f;
+    float size_signpost = 50.f;
+    float size_item = 25.f;
+    float size_boss = 125.f;
+    float size_minion = 50.f;
     Shape_e default_shape = Tear;
 
     bool agentcolors_changed = false;
     CSimpleIni* agentcolorinifile = nullptr;
+
+    GW::HookEntry UIMsg_Entry;
+    static void OnUIMessage(GW::HookStatus*, GW::UI::UIMessage, void*, void*);
 };

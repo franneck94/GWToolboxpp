@@ -1,24 +1,18 @@
 #include "stdafx.h"
 
 #include <GWCA/Constants/Constants.h>
-
-#include <GWCA/GameContainers/Array.h>
 #include <GWCA/GameContainers/GamePos.h>
-
-#include <GWCA/Packets/StoC.h>
-
-#include <GWCA/GameEntities/Party.h>
-
 #include <GWCA/Managers/MapMgr.h>
 #include <GWCA/Managers/AgentMgr.h>
 
 #include <Defines.h>
-#include <GuiUtils.h>
+#include <Utils/GuiUtils.h>
 #include <GWToolbox.h>
 
 #include <Modules/Updater.h>
 #include <Modules/Resources.h>
 #include <Modules/ChatFilter.h>
+#include <Modules/ItemFilter.h>
 #include <Modules/ChatCommands.h>
 #include <Modules/GameSettings.h>
 #include <Modules/DiscordModule.h>
@@ -30,6 +24,12 @@
 #include <Modules/TeamspeakModule.h>
 #include <Modules/ObserverModule.h>
 #include <Modules/Obfuscator.h>
+#include <Modules/ChatLog.h>
+#include <Modules/HintsModule.h>
+#if 0
+#include <Modules/GWFileRequester.h>
+#endif
+#include <Modules/HallOfMonumentsModule.h>
 
 #include <Windows/MainWindow.h>
 #include <Windows/PconsWindow.h>
@@ -42,6 +42,7 @@
 #include <Windows/MaterialsWindow.h>
 #include <Windows/SettingsWindow.h>
 #include <Windows/NotePadWindow.h>
+#include <Windows/PartyStatisticsWindow.h>
 #include <Windows/TradeWindow.h>
 #include <Windows/ObjectiveTimerWindow.h>
 #include <Windows/FactionLeaderboardWindow.h>
@@ -51,16 +52,17 @@
 #include <Windows/ObserverTargetWindow.h>
 #include <Windows/ObserverPartyWindow.h>
 #include <Windows/ObserverExportWindow.h>
+#include <Windows/CompletionWindow.h>
 #ifdef _DEBUG
 #include <Windows/PacketLoggerWindow.h>
 #include <Windows/DoorMonitorWindow.h>
-#include <Windows/MissionsWindow.h>
 #if 0
 #include <Windows/PartySearchWindow.h>
 #endif
 #include <Windows/StringDecoderWindow.h>
 #include <Windows/SkillListingWindow.h>
 #endif
+#include <Windows/RerollWindow.h>
 
 
 #include <Widgets/TimerWidget.h>
@@ -73,11 +75,11 @@
 #include <Widgets/VanquishWidget.h>
 #include <Widgets/AlcoholWidget.h>
 #include <Widgets/SkillbarWidget.h>
-
+#include <Widgets/SkillMonitorWidget.h>
+#include <Widgets/WorldMapWidget.h>
+#include <Widgets/EffectsMonitorWidget.h>
+#include <Widgets/LatencyWidget.h>
 #include "ToolboxSettings.h"
-
-//#define _FUN
-
 
 bool ToolboxSettings::move_all = false;
 
@@ -85,9 +87,13 @@ void ToolboxSettings::LoadModules(CSimpleIni* ini) {
     SettingsWindow::Instance().sep_modules = optional_modules.size();
     optional_modules.push_back(&Updater::Instance());
 
+#if 0
+    optional_modules.push_back(&GWFileRequester::Instance());
+#endif
 
     if (use_chatcommand) optional_modules.push_back(&ChatCommands::Instance());
     if (use_chatfilter) optional_modules.push_back(&ChatFilter::Instance());
+    if (use_itemfilter) optional_modules.push_back(&ItemFilter::Instance());
     optional_modules.push_back(&GameSettings::Instance());
     optional_modules.push_back(&InventoryManager::Instance());
     if (use_partywindowmodule) optional_modules.push_back(&PartyWindowModule::Instance());
@@ -97,6 +103,9 @@ void ToolboxSettings::LoadModules(CSimpleIni* ini) {
     if (use_twitch) optional_modules.push_back(&TwitchModule::Instance());
     if (use_teamspeak) optional_modules.push_back(&TeamspeakModule::Instance());
     if (use_observer) optional_modules.push_back(&ObserverModule::Instance());
+    optional_modules.push_back(&ChatLog::Instance());
+    optional_modules.push_back(&HintsModule::Instance());
+    optional_modules.push_back(&HallOfMonumentsModule::Instance());
 
     SettingsWindow::Instance().sep_windows = optional_modules.size();
     optional_modules.push_back(&SettingsWindow::Instance());
@@ -119,6 +128,9 @@ void ToolboxSettings::LoadModules(CSimpleIni* ini) {
     if (use_observer_party_window) optional_modules.push_back(&ObserverPartyWindow::Instance());
     if (use_observer_export_window) optional_modules.push_back(&ObserverExportWindow::Instance());
     if (use_obfuscator) optional_modules.push_back(&Obfuscator::Instance());
+    if (use_completion_window) optional_modules.push_back(&CompletionWindow::Instance());
+    if (use_reroll_window) optional_modules.push_back(&RerollWindow::Instance());
+    if (use_party_statistics) optional_modules.push_back(&PartyStatisticsWindow::Instance());
 
 #ifdef _DEBUG
 #if 0
@@ -128,8 +140,6 @@ void ToolboxSettings::LoadModules(CSimpleIni* ini) {
     optional_modules.push_back(&StringDecoderWindow::Instance());
     optional_modules.push_back(&DoorMonitorWindow::Instance());
     optional_modules.push_back(&SkillListingWindow::Instance());
-    optional_modules.push_back(&MissionsWindow::Instance());
-
 #endif
     std::sort(
         optional_modules.begin() + static_cast<int>(SettingsWindow::Instance().sep_windows),
@@ -149,6 +159,13 @@ void ToolboxSettings::LoadModules(CSimpleIni* ini) {
     if (use_clock) optional_modules.push_back(&ClockWidget::Instance());
     if (use_vanquish) optional_modules.push_back(&VanquishWidget::Instance());
     if (use_alcohol) optional_modules.push_back(&AlcoholWidget::Instance());
+    if (use_world_map) optional_modules.push_back(&WorldMapWidget::Instance());
+    if (use_effect_monitor) optional_modules.push_back(&EffectsMonitorWidget::Instance());
+    if (use_latency_widget) optional_modules.push_back(&LatencyWidget::Instance());
+    if (use_skill_monitor) optional_modules.push_back(&SkillMonitorWidget::Instance());
+#if _DEBUG
+
+#endif
 
     std::sort(
         optional_modules.begin() + static_cast<int>(SettingsWindow::Instance().sep_widgets),
@@ -167,13 +184,14 @@ void ToolboxSettings::LoadModules(CSimpleIni* ini) {
 }
 
 void ToolboxSettings::DrawSettingInternal() {
-    Updater::Instance().DrawSettingInternal();
-
-    ImGui::Separator();
     DrawFreezeSetting();
+    ImGui::Separator();
+
+    Updater::Instance().DrawSettingInternal();
+    ImGui::Separator();
+
     ImGui::Checkbox("Save Location Data", &save_location_data);
     ImGui::ShowHelp("Toolbox will save your location every second in a file in Settings Folder.");
-    
     const size_t cols = (size_t)floor(ImGui::GetWindowWidth() / (170.0f * ImGui::GetIO().FontGlobalScale));
 
     ImGui::Separator();
@@ -184,17 +202,22 @@ void ToolboxSettings::DrawSettingInternal() {
         {"Alcohol",&use_alcohol},
         {"Bonds",&use_bonds},
         {"Builds",&use_builds},
+        {"Chatfilter",&use_chatfilter},
         {"Clock",&use_clock},
+        {"Completion",&use_completion_window},
         {"Daily Quests",&use_daily_quests},
         {"Damage",&use_damage},
         {"Dialogs",&use_dialogs},
         {"Discord",&use_discord},
         {"Distance",&use_distance},
+        {"Effect Monitor",&use_effect_monitor},
         {"Health",&use_health},
         {"Hotkeys",&use_hotkeys},
         {"Friend List",&use_friendlist},
         {"Hero Builds",&use_herobuilds},
         {"Info",&use_info},
+        {"Itemfilter",&use_itemfilter},
+        {"Latency Widget", &use_latency_widget},
         {"Materials",&use_materials},
         {"Minimap",&use_minimap},
         {"Notepad",&use_notepad},
@@ -202,6 +225,8 @@ void ToolboxSettings::DrawSettingInternal() {
         {"Obfuscator",&use_obfuscator},
         {"Party Window",&use_partywindowmodule},
         {"Pcons",&use_pcons},
+        {"Reroll",&use_reroll_window},
+        {"Skill Monitor",&use_skill_monitor},
         {"Timer",&use_timer},
         {"Trade",&use_trade},
         {"Travel",&use_travel},
@@ -212,12 +237,14 @@ void ToolboxSettings::DrawSettingInternal() {
         {"Observer Target Window",&use_observer_target_window},
         {"Observer Party Window",&use_observer_party_window},
         {"Observer Export Window",&use_observer_export_window},
-        {"Vanquish counter",&use_vanquish}
+        {"Party Statistics",&use_party_statistics},
+        {"Vanquish counter",&use_vanquish},
+        {"World Map",&use_world_map},
     };
     ImGui::Columns(static_cast<int>(cols), "global_enable_cols", false);
     size_t items_per_col = (size_t)ceil(features.size() / static_cast<float>(cols));
     size_t col_count = 0;
-    for (auto feature : features) {
+    for (const auto& feature : features) {
         ImGui::Checkbox(feature.first, feature.second);
         col_count++;
         if (col_count == items_per_col) {
@@ -227,37 +254,6 @@ void ToolboxSettings::DrawSettingInternal() {
     }
     ImGui::Columns(1);
     ImGui::PopID();
-    
-    ImGui::Separator();
-    if (ImGui::TreeNodeEx("Show the following in the main window:", ImGuiTreeNodeFlags_FramePadding | ImGuiTreeNodeFlags_SpanAvailWidth)) {
-
-        std::vector<ToolboxUIElement*> ui = GWToolbox::Instance().GetUIElements();
-        ImGui::Columns(static_cast<int>(cols), "menubuttons_cols", false);
-        col_count = 0;
-        std::vector<ToolboxUIElement*> valid_elements;
-        for (size_t i = 0; i < ui.size(); i++) {
-            auto& window = ui[i];
-            if ((window->IsWidget() || window->IsWindow()) && window->can_show_in_main_window) {
-                valid_elements.push_back(window);
-            }
-        }
-        std::sort(valid_elements.begin(), valid_elements.end(), [](const ToolboxModule* lhs, const ToolboxModule* rhs) {
-            return std::string(lhs->Name()).compare(rhs->Name()) < 0;
-        });
-        items_per_col = (size_t)ceil(valid_elements.size() / static_cast<float>(cols));
-        for (size_t i = 0; i < valid_elements.size(); i++) {
-            auto window = valid_elements[i];
-            if (ImGui::Checkbox(window->Name(), &window->show_menubutton))
-                MainWindow::Instance().pending_refresh_buttons = true;
-            col_count++;
-            if (col_count == items_per_col) {
-                ImGui::NextColumn();
-                col_count = 0;
-            }
-        }
-        ImGui::Columns(1);
-        ImGui::TreePop();
-    }
 }
 
 void ToolboxSettings::DrawFreezeSetting() {
@@ -292,6 +288,7 @@ void ToolboxSettings::LoadSettings(CSimpleIni* ini) {
     use_gamesettings = ini->GetBoolValue(Name(), VAR_NAME(use_gamesettings), use_gamesettings);
     use_updater = ini->GetBoolValue(Name(), VAR_NAME(use_updater), use_updater);
     use_chatfilter = ini->GetBoolValue(Name(), VAR_NAME(use_chatfilter), use_chatfilter);
+    use_itemfilter = ini->GetBoolValue(Name(), VAR_NAME(use_itemfilter), use_itemfilter);
     use_chatcommand = ini->GetBoolValue(Name(), VAR_NAME(use_chatcommand), use_chatcommand);
     use_discord = ini->GetBoolValue(Name(), VAR_NAME(use_discord), use_discord);
     use_factionleaderboard = ini->GetBoolValue(Name(), VAR_NAME(use_factionleaderboard), use_factionleaderboard);
@@ -307,6 +304,13 @@ void ToolboxSettings::LoadSettings(CSimpleIni* ini) {
     use_serverinfo = ini->GetBoolValue(Name(), VAR_NAME(use_serverinfo), use_serverinfo);
     use_daily_quests = ini->GetBoolValue(Name(), VAR_NAME(use_daily_quests), use_daily_quests);
     use_obfuscator = ini->GetBoolValue(Name(), VAR_NAME(use_obfuscator), use_obfuscator);
+    use_completion_window = ini->GetBoolValue(Name(), VAR_NAME(use_completion_window), use_completion_window);
+    use_world_map = ini->GetBoolValue(Name(), VAR_NAME(use_world_map), use_world_map);
+    use_effect_monitor = ini->GetBoolValue(Name(), VAR_NAME(use_effect_monitor), use_effect_monitor);
+    use_reroll_window = ini->GetBoolValue(Name(), VAR_NAME(use_reroll_window), use_reroll_window);
+    use_party_statistics = ini->GetBoolValue(Name(), VAR_NAME(use_party_statistics), use_party_statistics);
+    use_skill_monitor = ini->GetBoolValue(Name(), VAR_NAME(use_skill_monitor), use_skill_monitor);
+    use_latency_widget = ini->GetBoolValue(Name(), VAR_NAME(use_latency_widget), use_latency_widget);
 }
 
 void ToolboxSettings::SaveSettings(CSimpleIni* ini) {
@@ -348,14 +352,26 @@ void ToolboxSettings::SaveSettings(CSimpleIni* ini) {
     ini->SetBoolValue(Name(), VAR_NAME(use_gamesettings), use_gamesettings);
     ini->SetBoolValue(Name(), VAR_NAME(use_updater), use_updater);
     ini->SetBoolValue(Name(), VAR_NAME(use_chatfilter), use_chatfilter);
+    ini->SetBoolValue(Name(), VAR_NAME(use_itemfilter), use_itemfilter);
     ini->SetBoolValue(Name(), VAR_NAME(use_chatcommand), use_chatcommand);
     ini->SetBoolValue(Name(), VAR_NAME(use_daily_quests), use_daily_quests);
     ini->SetBoolValue(Name(), VAR_NAME(use_obfuscator), use_obfuscator);
+    ini->SetBoolValue(Name(), VAR_NAME(use_completion_window), use_completion_window);
+    ini->SetBoolValue(Name(), VAR_NAME(use_world_map), use_world_map);
+    ini->SetBoolValue(Name(), VAR_NAME(use_effect_monitor), use_effect_monitor);
+    ini->SetBoolValue(Name(), VAR_NAME(use_reroll_window), use_reroll_window);
+    ini->SetBoolValue(Name(), VAR_NAME(use_party_statistics), use_party_statistics);
+    ini->SetBoolValue(Name(), VAR_NAME(use_skill_monitor), use_skill_monitor);
+    ini->SetBoolValue(Name(), VAR_NAME(use_latency_widget), use_latency_widget);
+}
+
+void ToolboxSettings::Draw(IDirect3DDevice9*) {
+    ImGui::GetStyle().WindowBorderSize = (move_all ? 1.0f : 0.0f);
 }
 
 void ToolboxSettings::Update(float delta) {
     UNREFERENCED_PARAMETER(delta);
-    ImGui::GetStyle().WindowBorderSize = (move_all ? 1.0f : 0.0f);
+
 
     // save location data
     if (save_location_data && TIMER_DIFF(location_timer) > 1000) {

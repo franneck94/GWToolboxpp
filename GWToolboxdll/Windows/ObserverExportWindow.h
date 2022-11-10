@@ -11,16 +11,14 @@
 #include <GWCA/Managers/AgentMgr.h>
 #include "GWCA\Managers\UIMgr.h"
 
-#include <GuiUtils.h>
+#include <Utils/GuiUtils.h>
 #include <Timer.h>
 #include <ToolboxWindow.h>
 
 class ObserverExportWindow : public ToolboxWindow {
 public:
-    ObserverExportWindow() {};
-    ~ObserverExportWindow() {
-        //
-    };
+    ObserverExportWindow() = default;
+    ~ObserverExportWindow() = default;
 
     static ObserverExportWindow& Instance() {
         static ObserverExportWindow instance;
@@ -38,7 +36,7 @@ public:
     void ExportToJSON(Version version);
 
     const char* Name() const override { return "Observer Export"; };
-    const char* Icon() const override { return ICON_FA_EYE; }
+    const char8_t* Icon() const override { return ICON_FA_EYE; }
     void Draw(IDirect3DDevice9* pDevice) override;
     void Initialize() override;
 

@@ -1,56 +1,125 @@
 #include "stdafx.h"
 
-#include <GWCA/Utilities/Hooker.h>
-#include <GWCA/GameContainers/Array.h>
-#include <GWCA/GameContainers/GamePos.h>
-#include <GWCA/GameEntities/Party.h>
-
 #include <GWCA/GWCA.h>
+#include <GWCA/Utilities/Hooker.h>
 
 #include <GWCA/Context/PreGameContext.h>
+#include <GWCA/Context/CharContext.h>
 
 #include <GWCA/Managers/MapMgr.h>
 #include <GWCA/Managers/ChatMgr.h>
 #include <GWCA/Managers/StoCMgr.h>
-#include <GWCA/Managers/AgentMgr.h>
 #include <GWCA/Managers/MemoryMgr.h>
 #include <GWCA/Managers/RenderMgr.h>
 
 #include <CursorFix.h>
-#include <d3dx9_dynamic.h>
 #include <Defines.h>
-#include <GuiUtils.h>
+#include <Utils/GuiUtils.h>
 #include <GWToolbox.h>
 #include <Logger.h>
 
 #include <Modules/Resources.h>
 #include <Modules/ChatCommands.h>
-#include <Modules/GameSettings.h>
 #include <Modules/ToolboxTheme.h>
 #include <Modules/ToolboxSettings.h>
+#include <Modules/CrashHandler.h>
+#include <Modules/DialogModule.h>
+
 #include <Windows/MainWindow.h>
 #include <Widgets/Minimap/Minimap.h>
+#include <GWCA/Context/GameContext.h>
+
+// declare method here as recommended by imgui
+extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
 
 namespace {
-    HMODULE dllmodule = 0;
-
-    long OldWndProc = 0;
-    bool tb_initialized = false;
+    HMODULE dllmodule = nullptr;
+    WNDPROC OldWndProc = nullptr;
     bool tb_destroyed = false;
-
-    bool drawing_world = 0;
-    int drawing_passes = 0;
-    int last_drawing_passes = 0;
-
     bool defer_close = false;
+    HWND gw_window_handle = nullptr;
+
+    utf8::string imgui_inifile;
+    CSimpleIni* inifile = nullptr;
+    bool SaveIniToFile(const CSimpleIni* ini, const std::filesystem::path& location) {
+        auto tmp_file = std::filesystem::path(location);
+        tmp_file += ".tmp";
+        const SI_Error res = ini->SaveFile(tmp_file.c_str());
+        if (res < 0) {
+            return false;
+        }
+        std::filesystem::rename(tmp_file, location);
+        return true;
+    }
+
+    bool event_handler_attached = false;
+    bool AttachWndProcHandler() {
+        if (event_handler_attached)
+            return true;
+        Log::Log("installing event handler\n");
+        gw_window_handle = GW::MemoryMgr::GetGWWindowHandle();
+        OldWndProc = reinterpret_cast<WNDPROC>(SetWindowLongPtrW(gw_window_handle, GWL_WNDPROC, reinterpret_cast<LONG>(SafeWndProc)));
+        Log::Log("Installed input event handler, oldwndproc = 0x%X\n", OldWndProc);
+        event_handler_attached = true;
+        return true;
+    }
+    bool DetachWndProcHandler() {
+        if (!event_handler_attached)
+            return true;
+        Log::Log("Restoring input hook\n");
+        SetWindowLongPtr(gw_window_handle, GWL_WNDPROC, reinterpret_cast<LONG>(OldWndProc));
+        event_handler_attached = false;
+        return true;
+    }
+
+    bool imgui_initialized = false;
+    bool AttachImgui(IDirect3DDevice9* device) {
+        if (imgui_initialized)
+            return true;
+        ImGui::CreateContext();
+        //ImGui_ImplDX9_Init(GW::MemoryMgr().GetGWWindowHandle(), device);
+        ImGui_ImplDX9_Init(device);
+        ImGui_ImplWin32_Init(GW::MemoryMgr::GetGWWindowHandle());
+
+        GW::Render::SetResetCallback([](IDirect3DDevice9* device) {
+            UNREFERENCED_PARAMETER(device);
+            ImGui_ImplDX9_InvalidateDeviceObjects();
+            });
+
+        ImGuiIO& io = ImGui::GetIO();
+        io.MouseDrawCursor = false;
+        io.IniFilename = imgui_inifile.bytes;
+
+        Resources::EnsureFileExists(Resources::GetPath(L"Font.ttf"),
+            "https://raw.githubusercontent.com/HasKha/GWToolboxpp/master/resources/Font.ttf",
+            [](bool success, const std::wstring& error) {
+            if (success) {
+                GuiUtils::LoadFonts();
+            }
+            else {
+                Log::ErrorW(L"Cannot download font, please download it manually!\n%s", error.c_str());
+            }
+        });
+        imgui_initialized = true;
+        return true;
+    }
+    bool DetachImgui() {
+        if (!imgui_initialized)
+            return true;
+        ImGui_ImplDX9_Shutdown();
+        ImGui_ImplWin32_Shutdown();
+        ImGui::DestroyContext();
+        imgui_initialized = false;
+        return true;
+    }
 }
 
 HMODULE GWToolbox::GetDLLModule() {
     return dllmodule;
 }
 
-DWORD __stdcall SafeThreadEntry(LPVOID module) {
-    dllmodule = (HMODULE)module;
+DWORD __stdcall SafeThreadEntry(LPVOID module) noexcept {
+    dllmodule = static_cast<HMODULE>(module);
     __try {
         ThreadEntry(nullptr);
     } __except ( EXCEPT_EXPRESSION_ENTRY ) {
@@ -62,24 +131,10 @@ DWORD __stdcall SafeThreadEntry(LPVOID module) {
 DWORD __stdcall ThreadEntry(LPVOID) {
     Log::Log("Initializing API\n");
 
-    // Try to load DirectX runtime dll. Installer should have sorted this, but may not have.
-    if (!Loadd3dx9()) {
-        // Handle this now before we go any further - removing this check will cause a crash when modules try to use D3DX9 funcs in Draw() later and will close GW
-        char title[128];
-        sprintf(title, "GWToolbox++ API Error (LastError: %lu)", GetLastError());
-        if (MessageBoxA(0, 
-            "Failed to load d3dx9_xx.dll; this machine may not have DirectX runtime installed.\nGWToolbox++ needs this installed to continue.\n\nVisit DirectX Redistributable download page?", 
-            title, MB_YESNO) == IDYES) {
-            ShellExecute(0, 0, DIRECTX_REDIST_WEBSITE, 0, 0, SW_SHOW);
-        }
-    
-        goto leave;
-    }
-
     GW::HookBase::Initialize();
     if (!GW::Initialize()){
-        if (MessageBoxA(0, "Initialize Failed at finding all addresses, contact Developers about this.", "GWToolbox++ API Error", 0) == IDOK) {
-            
+        if (MessageBoxA(nullptr, "Initialize Failed at finding all addresses, contact Developers about this.", "GWToolbox++ API Error", 0) == IDOK) {
+
         }
         goto leave;
     }
@@ -89,16 +144,10 @@ DWORD __stdcall ThreadEntry(LPVOID) {
     InstallCursorFix();
 
     Log::Log("Installing dx hooks\n");
-    GW::Render::SetRenderCallback([](IDirect3DDevice9* device) {
-        __try {
-            GWToolbox::Instance().Draw(device);
-        } __except ( EXCEPT_EXPRESSION_ENTRY ) {
-        }
-    });
-    GW::Render::SetResetCallback([](IDirect3DDevice9* device) {
-        UNREFERENCED_PARAMETER(device);
-        ImGui_ImplDX9_InvalidateDeviceObjects();
-    });
+
+    // Some modules rely on the gwdx_ptr being present for stuff like getting viewport coords.
+    // Becuase this ptr isn't set until the Render loop runs at least once, let it run and then reassign SetRenderCallback.
+    GWToolbox::Instance().Initialize();
 
     Log::Log("Installed dx hooks\n");
 
@@ -110,10 +159,12 @@ DWORD __stdcall ThreadEntry(LPVOID) {
 
     Log::Log("Hooks Enabled!\n");
 
+
+
     while (!tb_destroyed) { // wait until destruction
         Sleep(100);
 
-        // Feel free to uncomment to get this behavior for testing, but don't commit. 
+        // Feel free to uncomment to get this behavior for testing, but don't commit.
 //#ifdef _DEBUG
 //        if (GetAsyncKeyState(VK_END) & 1) {
 //            GWToolbox::Instance().StartSelfDestruct();
@@ -147,23 +198,24 @@ LRESULT CALLBACK SafeWndProc(HWND hWnd, UINT Message, WPARAM wParam, LPARAM lPar
     __try {
         return WndProc(hWnd, Message, wParam, lParam);
     } __except (EXCEPTION_EXECUTE_HANDLER) {
-        return CallWindowProc((WNDPROC)OldWndProc, hWnd, Message, wParam, lParam);
+        return CallWindowProc(OldWndProc, hWnd, Message, wParam, lParam);
     }
 }
 
 LRESULT CALLBACK WndProc(HWND hWnd, UINT Message, WPARAM wParam, LPARAM lParam) {
     static bool right_mouse_down = false;
 
-    if (!tb_initialized || tb_destroyed) {
-        return CallWindowProc((WNDPROC)OldWndProc, hWnd, Message, wParam, lParam);
-    }
-
-    if (Message == WM_CLOSE) {
+    if (Message == WM_CLOSE || Message == WM_SYSCOMMAND && wParam == SC_CLOSE) {
         // This is naughty, but we need to defer the closing signal until toolbox has terminated properly.
-        // we can't sleep here, because toolbox modules will probably be using the render loop to close off things like hooks
+        // we can't sleep here, because toolbox modules will probably be using the render loop to close off things
+        // like hooks
         GWToolbox::Instance().StartSelfDestruct();
         defer_close = true;
         return 0;
+    }
+
+    if (!(!GW::PreGameContext::instance() && imgui_initialized && GWToolbox::Instance().IsInitialized() && !tb_destroyed)) {
+        return CallWindowProc(OldWndProc, hWnd, Message, wParam, lParam);
     }
 
     if (Message == WM_RBUTTONUP) right_mouse_down = false;
@@ -172,82 +224,26 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT Message, WPARAM wParam, LPARAM lParam) 
 
     GWToolbox::Instance().right_mouse_down = right_mouse_down;
 
-    bool skip_mouse_capture = right_mouse_down || GW::UI::GetIsWorldMapShowing();
-
-
-
     // === Send events to ImGui ===
-    ImGuiIO& io = ImGui::GetIO();
-
-    switch (Message) {
-    case WM_LBUTTONDOWN:
-    case WM_LBUTTONDBLCLK:
-        if (!skip_mouse_capture) io.MouseDown[0] = true;
-        break;
-    case WM_LBUTTONUP:
-        io.MouseDown[0] = false; 
-        break;
-    case WM_MBUTTONDOWN:
-    case WM_MBUTTONDBLCLK:
-        if (!skip_mouse_capture) {
-            io.KeysDown[VK_MBUTTON] = true;
-            io.MouseDown[2] = true;
-        }
-        break;
-    case WM_MBUTTONUP:
-        io.KeysDown[VK_MBUTTON] = false;
-        io.MouseDown[2] = false;
-        break;
-    case WM_MOUSEWHEEL: 
-        if (!skip_mouse_capture) io.MouseWheel += GET_WHEEL_DELTA_WPARAM(wParam) > 0 ? +1.0f : -1.0f;
-        break;
-    case WM_MOUSEMOVE:
-        if (!skip_mouse_capture) {
-            io.MousePos.x = (float)GET_X_LPARAM(lParam);
-            io.MousePos.y = (float)GET_Y_LPARAM(lParam);
-        }
-        break;
-    case WM_XBUTTONDOWN:
-        if (!skip_mouse_capture) {
-            if (GET_XBUTTON_WPARAM(wParam) == XBUTTON1) io.KeysDown[VK_XBUTTON1] = true;
-            if (GET_XBUTTON_WPARAM(wParam) == XBUTTON2) io.KeysDown[VK_XBUTTON2] = true;
-        }
-        break;
-    case WM_XBUTTONUP:
-        if (GET_XBUTTON_WPARAM(wParam) == XBUTTON1) io.KeysDown[VK_XBUTTON1] = false;
-        if (GET_XBUTTON_WPARAM(wParam) == XBUTTON2) io.KeysDown[VK_XBUTTON2] = false;
-        break;
-    case WM_SYSKEYDOWN:
-    case WM_KEYDOWN:
-        if (wParam < 256)
-            io.KeysDown[wParam] = true;
-        break;
-    case WM_SYSKEYUP:
-    case WM_KEYUP:
-        if (wParam < 256)
-            io.KeysDown[wParam] = false;
-        break;
-    case WM_CHAR: // You can also use ToAscii()+GetKeyboardState() to retrieve characters.
-        if (wParam > 0 && wParam < 0x10000)
-            io.AddInputCharacter((unsigned short)wParam);
-        break;
-    default:
-        break;
+    const ImGuiIO& io = ImGui::GetIO();
+    const bool skip_mouse_capture = right_mouse_down || GW::UI::GetIsWorldMapShowing();
+    if (ImGui_ImplWin32_WndProcHandler(hWnd, Message, wParam, lParam) && !skip_mouse_capture) {
+        return TRUE;
     }
 
-    
 
     // === Send events to toolbox ===
-    GWToolbox& tb = GWToolbox::Instance();
+    const GWToolbox& tb = GWToolbox::Instance();
     switch (Message) {
     // Send button up mouse events to everything, to avoid being stuck on mouse-down
     case WM_LBUTTONUP:
     case WM_RBUTTONUP:
+    case WM_INPUT:
         for (ToolboxModule* m : tb.GetModules()) {
             m->WndProc(Message, wParam, lParam);
         }
         break;
-        
+
     // Other mouse events:
     // - If right mouse down, leave it to gw
     // - ImGui first (above), if WantCaptureMouse that's it
@@ -259,12 +255,14 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT Message, WPARAM wParam, LPARAM lParam) 
     case WM_RBUTTONDBLCLK:
     case WM_MOUSEMOVE:
     case WM_MOUSEWHEEL: {
-        if (io.WantCaptureMouse && !skip_mouse_capture) return true;
+        if (io.WantCaptureMouse && !skip_mouse_capture)
+            return true;
         bool captured = false;
         for (ToolboxModule* m : tb.GetModules()) {
             if (m->WndProc(Message, wParam, lParam)) captured = true;
         }
-        if (captured) return true;
+        if (captured)
+            return true;
     }
         //if (!skip_mouse_capture) {
 
@@ -302,9 +300,9 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT Message, WPARAM wParam, LPARAM lParam) 
             }
             if (captured) return true;
         }
-        // note: capturing those events would prevent typing if you have a hotkey assigned to normal letters. 
+        // note: capturing those events would prevent typing if you have a hotkey assigned to normal letters.
         // We may want to not send events to toolbox if the player is typing in-game
-        // Otherwise, we may want to capture events. 
+        // Otherwise, we may want to capture events.
         // For that, we may want to only capture *successfull* hotkey activations.
         break;
 
@@ -320,27 +318,37 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT Message, WPARAM wParam, LPARAM lParam) 
         }
         break;
     }
-    
-    return CallWindowProc((WNDPROC)OldWndProc, hWnd, Message, wParam, lParam);
+
+    return CallWindowProc(OldWndProc, hWnd, Message, wParam, lParam);
 }
 
-void GWToolbox::Initialize() {
+void GWToolbox::Initialize()
+{
+    if (initialized || must_self_destruct)
+        return;
+
+    imgui_inifile = Resources::GetPathUtf8(L"interface.ini");
+
     Log::Log("Creating Toolbox\n");
 
-    GW::GameThread::RegisterGameThreadCallback(&Update_Entry, GWToolbox::Update);
+    GW::GameThread::RegisterGameThreadCallback(&Update_Entry, [](GW::HookStatus* a) { GWToolbox::Instance().Update(a); });
 
-    Resources::Instance().EnsureFolderExists(Resources::GetPath(L"img"));
-    Resources::Instance().EnsureFolderExists(Resources::GetPath(L"img\\bonds"));
-    Resources::Instance().EnsureFolderExists(Resources::GetPath(L"img\\icons"));
-    Resources::Instance().EnsureFolderExists(Resources::GetPath(L"img\\materials"));
-    Resources::Instance().EnsureFolderExists(Resources::GetPath(L"img\\pcons"));
-    Resources::Instance().EnsureFolderExists(Resources::GetPath(L"location logs"));
-    Resources::Instance().EnsureFileExists(Resources::GetPath(L"GWToolbox.ini"),
-        L"https://raw.githubusercontent.com/HasKha/GWToolboxpp/master/resources/GWToolbox.ini",
-        [](bool success) {
+    Resources::EnsureFolderExists(Resources::GetSettingsFolderPath());
+    Resources::EnsureFolderExists(Resources::GetPath(L"img"));
+    Resources::EnsureFolderExists(Resources::GetPath(L"img\\bonds"));
+    Resources::EnsureFolderExists(Resources::GetPath(L"img\\icons"));
+    Resources::EnsureFolderExists(Resources::GetPath(L"img\\materials"));
+    Resources::EnsureFolderExists(Resources::GetPath(L"img\\pcons"));
+    Resources::EnsureFolderExists(Resources::GetPath(L"location logs"));
+    Resources::EnsureFileExists(Resources::GetPath(L"GWToolbox.ini"),
+        "https://raw.githubusercontent.com/HasKha/GWToolboxpp/master/resources/GWToolbox.ini",
+        [this](bool success, const std::wstring& error) {
         if (success) {
-            GWToolbox::Instance().OpenSettingsFile();
-            GWToolbox::Instance().LoadModuleSettings();
+            OpenSettingsFile();
+            LoadModuleSettings();
+        }
+        else {
+            Log::ErrorW(L"Failed to download GWToolbox ini\n%s", error.c_str());
         }
     });
 
@@ -349,10 +357,14 @@ void GWToolbox::Initialize() {
     OpenSettingsFile();
 
     Log::Log("Creating Modules\n");
+    core_modules.push_back(&CrashHandler::Instance());
     core_modules.push_back(&Resources::Instance());
     core_modules.push_back(&ToolboxTheme::Instance());
     core_modules.push_back(&ToolboxSettings::Instance());
     core_modules.push_back(&MainWindow::Instance());
+    core_modules.push_back(&DialogModule::Instance());
+
+    plugin_manager.RefreshDlls();
 
     for (ToolboxModule* module : core_modules) {
         module->LoadSettings(inifile);
@@ -362,43 +374,54 @@ void GWToolbox::Initialize() {
     ToolboxSettings::Instance().LoadModules(inifile); // initialize all other modules as specified by the user
 
     if (GW::Map::GetInstanceType() != GW::Constants::InstanceType::Loading) {
-        auto* g = GW::GameContext::instance();
-        if(g && g->character && g->character->player_name)
+        const auto* c = GW::CharContext::instance();
+        if(c && c->player_name)
             Log::InfoW(L"Hello!");
     }
-}
-void GWToolbox::FlashWindow() {
-    FLASHWINFO flashInfo = { 0 };
-    flashInfo.cbSize = sizeof(FLASHWINFO);
-    flashInfo.hwnd = GW::MemoryMgr::GetGWWindowHandle();
-    flashInfo.dwFlags = FLASHW_TIMER | FLASHW_TRAY | FLASHW_TIMERNOFG;
-    flashInfo.uCount = 0;
-    flashInfo.dwTimeout = 0;
-    FlashWindowEx(&flashInfo);
+    GW::Render::SetRenderCallback([](IDirect3DDevice9* device) {
+        __try {
+            Instance().Draw(device);
+        }
+        __except (EXCEPT_EXPRESSION_ENTRY) {
+        }
+        });
+
+    initialized = true;
 }
 
-void GWToolbox::OpenSettingsFile() {
+void GWToolbox::OpenSettingsFile() const
+{
     Log::Log("Opening ini file\n");
     if (inifile == nullptr) inifile = new CSimpleIni(false, false, false);
     inifile->Reset();
     inifile->LoadFile(Resources::GetPath(L"GWToolbox.ini").c_str());
 }
-void GWToolbox::LoadModuleSettings() {
+void GWToolbox::LoadModuleSettings() const
+{
     for (ToolboxModule* module : modules) {
         module->LoadSettings(inifile);
     }
 }
-void GWToolbox::SaveSettings() {
+void GWToolbox::SaveSettings() const
+{
+    if (!inifile)
+        return;
     for (ToolboxModule* module : modules) {
         module->SaveSettings(inifile);
     }
-    if (inifile) inifile->SaveFile(Resources::GetPath(L"GWToolbox.ini").c_str());
+    ASSERT(SaveIniToFile(inifile, Resources::GetPath(L"GWToolbox.ini")));
 }
 
 void GWToolbox::Terminate() {
-    SaveSettings();
-    inifile->Reset();
-    delete inifile;
+    if (!initialized)
+        return;
+    if (inifile) {
+        SaveSettings();
+        inifile->Reset();
+        delete inifile;
+        inifile = nullptr;
+    }
+
 
     GW::GameThread::RemoveGameThreadCallback(&Update_Entry);
 
@@ -412,61 +435,44 @@ void GWToolbox::Terminate() {
 }
 
 void GWToolbox::Draw(IDirect3DDevice9* device) {
+    // === destruction ===
+    if (initialized && must_self_destruct) {
+        if (!GuiUtils::FontsLoaded())
+            return;
+        for (ToolboxModule* module : GWToolbox::Instance().modules) {
+            if (!module->CanTerminate())
+                return;
+        }
 
-    static HWND gw_window_handle = 0;
+        Instance().Terminate();
+        ASSERT(DetachImgui());
+        ASSERT(DetachWndProcHandler());
 
-    // === initialization ===
-    if (!tb_initialized && !GWToolbox::Instance().must_self_destruct) {
-
-        Log::Log("installing event handler\n");
-        gw_window_handle = GW::MemoryMgr::GetGWWindowHandle();
-        OldWndProc = SetWindowLongPtrW(gw_window_handle, GWL_WNDPROC, (long)SafeWndProc);
-        Log::Log("Installed input event handler, oldwndproc = 0x%X\n", OldWndProc);
-
-        ImGui::CreateContext();
-        //ImGui_ImplDX9_Init(GW::MemoryMgr().GetGWWindowHandle(), device);
-        ImGui_ImplDX9_Init(device);
-        ImGui_ImplWin32_Init(GW::MemoryMgr().GetGWWindowHandle());
-
-        ImGuiIO& io = ImGui::GetIO();
-        io.MouseDrawCursor = false;
-        
-        GWToolbox& tb = GWToolbox::Instance();
-        tb.imgui_inifile = Resources::GetPathUtf8(L"interface.ini");
-        io.IniFilename = tb.imgui_inifile.bytes;
-
-        Resources::Instance().EnsureFileExists(Resources::GetPath(L"Font.ttf"),
-            L"https://raw.githubusercontent.com/HasKha/GWToolboxpp/master/resources/Font.ttf",
-            [](bool success) {
-            if (success) {
-                GuiUtils::LoadFonts();
-            } else {
-                Log::Error("Cannot load font!");
-            }
-        });
-
-        GWToolbox::Instance().Initialize();
-
-        tb_initialized = true;
+        GW::DisableHooks();
+        initialized = false;
+        tb_destroyed = true;
     }
-
     // === runtime ===
-    if (tb_initialized 
-        && !GWToolbox::Instance().must_self_destruct
+    if (initialized
+        && !must_self_destruct
         && GW::Render::GetViewportWidth() > 0
         && GW::Render::GetViewportHeight() > 0) {
+        // Attach WndProc in the render loop to make sure the window is loaded and ready
+        ASSERT(AttachWndProcHandler());
+        // Attach imgui if not already done so
+        ASSERT(AttachImgui(device));
 
         if (!GW::UI::GetIsUIDrawn())
             return;
 
-        if (GW::UI::GetIsWorldMapShowing())
-            return;
+        const bool world_map_showing = GW::UI::GetIsWorldMapShowing();
 
         if (GW::PreGameContext::instance())
             return; // Login screen
-
+#ifndef _DEBUG
         if (GW::Map::GetIsInCinematic())
             return;
+#endif
 
         if (IsIconic(GW::MemoryMgr::GetGWWindowHandle()))
             return;
@@ -479,23 +485,26 @@ void GWToolbox::Draw(IDirect3DDevice9* device) {
         ImGui_ImplDX9_NewFrame();
         ImGui_ImplWin32_NewFrame();
 
-        Minimap::Render(device);
+        if(!world_map_showing)
+            Minimap::Render(device);
 
         ImGui::NewFrame();
 
-        // Key up/down events don't get passed to gw window when out of focus, but we need the following to be correct, 
+        // Key up/down events don't get passed to gw window when out of focus, but we need the following to be correct,
         // or things like alt-tab make imgui think that alt is still down.
-        ImGui::GetIO().KeysDown[VK_CONTROL] = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
-        ImGui::GetIO().KeysDown[VK_SHIFT] = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
-        ImGui::GetIO().KeysDown[VK_MENU] = (GetKeyState(VK_MENU) & 0x8000) != 0;
-        
+        auto& io = ImGui::GetIO();
+        io.AddKeyEvent(ImGuiKey_ModCtrl, (GetKeyState(VK_CONTROL) & 0x8000) != 0);
+        io.AddKeyEvent(ImGuiKey_ModShift, (GetKeyState(VK_SHIFT) & 0x8000) != 0);
+        io.AddKeyEvent(ImGuiKey_ModAlt, (GetKeyState(VK_MENU) & 0x8000) != 0);
 
         for (ToolboxUIElement* uielement : GWToolbox::Instance().uielements) {
+            if (world_map_showing && !uielement->ShowOnWorldMap())
+                continue;
             uielement->Draw(device);
         }
-        //for (TBModule* mod : GWToolbox::Instance().plugins) {
-        //    mod->Draw(device);
-        //}
+        for (TBModule* mod : GWToolbox::Instance().plugins) {
+            mod->Draw(device);
+        }
 
 #ifdef _DEBUG
         // Feel free to uncomment to play with ImGui's features
@@ -508,32 +517,8 @@ void GWToolbox::Draw(IDirect3DDevice9* device) {
         ImGui_ImplDX9_RenderDrawData(ImGui::GetDrawData());
     }
 
-    // === destruction ===
-    if (tb_initialized && GWToolbox::Instance().must_self_destruct) {
-        if (!GuiUtils::FontsLoaded())
-            return;
-        for (ToolboxModule* module : GWToolbox::Instance().modules) {
-            if (!module->CanTerminate())
-                return;
-        }
 
-        GWToolbox::Instance().Terminate();
-
-        ImGui_ImplDX9_Shutdown();
-        ImGui_ImplWin32_Shutdown();
-        ImGui::DestroyContext();
-
-        Log::Log("Restoring input hook\n");
-        SetWindowLongPtr(gw_window_handle, GWL_WNDPROC, (long)OldWndProc);
-
-        GW::DisableHooks();
-        tb_initialized = false;
-        tb_destroyed = true;
-
-
-
-    }
-    if(tb_destroyed && defer_close) {
+    if (tb_destroyed && defer_close) {
         // Toolbox was closed by a user closing GW - close it here for the by sending the `WM_CLOSE` message again.
         SendMessageW(gw_window_handle, WM_CLOSE, NULL, NULL);
     }
@@ -545,9 +530,9 @@ void GWToolbox::Update(GW::HookStatus *)
     if (last_tick_count == 0)
         last_tick_count = GetTickCount();
 
-    GWToolbox& tb = GWToolbox::Instance();
-    if (tb_initialized
-        && !GWToolbox::Instance().must_self_destruct) {
+    if (initialized
+        && imgui_initialized
+        && !must_self_destruct) {
 
         // @Enhancement:
         // Improve precision with QueryPerformanceCounter
@@ -555,12 +540,9 @@ void GWToolbox::Update(GW::HookStatus *)
         DWORD delta = tick - last_tick_count;
         float delta_f = delta / 1000.f;
 
-        for (ToolboxModule* module : tb.modules) {
+        for (ToolboxModule* module : modules) {
             module->Update(delta_f);
         }
-        //for (TBModule* module : tb.plugins) {
-        //    module->Update(delta_f);
-        //}
 
         last_tick_count = tick;
     }

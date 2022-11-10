@@ -4,9 +4,16 @@
 
 #include <ToolboxWindow.h>
 
+namespace GW {
+    namespace Constants {
+        enum class QuestID;
+    }
+}
+
 class DialogsWindow : public ToolboxWindow {
-    DialogsWindow() {};
-    ~DialogsWindow() {};
+    DialogsWindow() = default;
+    ~DialogsWindow() = default;
+
 public:
     static DialogsWindow& Instance() {
         static DialogsWindow instance;
@@ -14,7 +21,7 @@ public:
     }
 
     const char* Name() const override { return "Dialogs"; }
-    const char* Icon() const override { return ICON_FA_COMMENT_DOTS; }
+    const char8_t* Icon() const override { return ICON_FA_COMMENT_DOTS; }
 
     void Draw(IDirect3DDevice9* pDevice) override;
 
@@ -23,19 +30,23 @@ public:
     void DrawSettingInternal() override;
 
 private:
-    inline DWORD QuestAcceptDialog(DWORD quest) { return (quest << 8) | 0x800001; }
-    inline DWORD QuestRewardDialog(DWORD quest) { return (quest << 8) | 0x800007; }
+    static constexpr uint32_t QuestAcceptDialog(GW::Constants::QuestID quest) {
+        return static_cast<int>(quest) << 8 | 0x800001;
+    }
+    static constexpr uint32_t QuestRewardDialog(GW::Constants::QuestID quest) {
+        return static_cast<int>(quest) << 8 | 0x800007;
+    }
 
-    DWORD IndexToQuestID(int index);
-    DWORD IndexToDialogID(int index);
+    static GW::Constants::QuestID IndexToQuestID(int index);
+    static uint32_t IndexToDialogID(int index);
 
     int fav_count = 0;
-    std::vector<int> fav_index;
+    std::vector<int> fav_index{};
 
     bool show_common = true;
     bool show_uwteles = true;
     bool show_favorites = true;
     bool show_custom = true;
 
-    char customdialogbuf[64] = "";
+    char customdialogbuf[11] = "";
 };

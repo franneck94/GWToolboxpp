@@ -43,7 +43,7 @@ public:
     }
 
     const char* Name() const override { return "Discord"; }
-    const char* Icon() const override { return ICON_FA_HEADSET; }
+    const char8_t* Icon() const override { return ICON_FA_HEADSET; }
 
     const char* SettingsName() const override { return "Third Party Integration"; }
 
@@ -61,11 +61,9 @@ public:
     void JoinParty();
     bool IsInJoinablePartyMap();
 
-    static bool IsMapUnlocked(uint32_t map_id);
-    static GW::Guild* GetCurrentGH();
-
     Application app;
     DiscordActivity activity;
+    DiscordActivity last_activity;
 
 private:
     DiscordCreateParams params;
@@ -93,6 +91,7 @@ private:
     time_t last_activity_update = 0;
 
     bool LoadDll();
+    bool UnloadDll();
     bool Connect();
     void ConnectCanary();
     void Disconnect();

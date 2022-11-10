@@ -8,7 +8,7 @@
 
 
 class PacketLoggerWindow : public ToolboxWindow {
-    PacketLoggerWindow() {};
+    PacketLoggerWindow() = default;
     ~PacketLoggerWindow() { ClearMessageLog(); };
 public:
     static PacketLoggerWindow& Instance() {
@@ -17,6 +17,8 @@ public:
     }
 
     const char* Name() const override { return "Packet Logger"; }
+    const char8_t* Icon() const override { return ICON_FA_BOX; };
+
     void Draw(IDirect3DDevice9* pDevice) override;
     void DrawSettingInternal() override;
 
@@ -34,7 +36,7 @@ public:
     void CtoSHandler(GW::HookStatus* status, void* packet);
     std::string PadLeft(std::string input, uint8_t count, char c);
     std::string PrefixTimestamp(std::string message);
-    
+
 private:
     enum TimestampType : int {
         TimestampType_None,

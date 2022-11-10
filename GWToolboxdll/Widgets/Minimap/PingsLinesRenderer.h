@@ -1,7 +1,6 @@
 #pragma once
 
 #include <GWCA/Packets/StoC.h>
-#include <GWCA/Managers/StoCMgr.h>
 #include <GWCA/Managers/UIMgr.h>
 #include <GWCA/GameContainers/GamePos.h>
 
@@ -29,7 +28,7 @@ class PingsLinesRenderer : public VBuffer {
     };
     struct Ping {
         Ping() : start(TIMER_INIT()) {}
-        virtual ~Ping(){};
+        virtual ~Ping() = default;
         clock_t start;
         int duration = 3000;
         virtual float GetX() const = 0;
@@ -80,7 +79,7 @@ public:
 
     void Render(IDirect3DDevice9* device) override;
 
-    inline void Invalidate() override {
+    void Invalidate() override {
         VBuffer::Invalidate();
         ping_circle.Invalidate();
         for (Ping* p : pings) delete p;
@@ -111,10 +110,11 @@ private:
     void DrawDrawings(IDirect3DDevice9* device);
     void EnqueueVertex(float x, float y, Color color);
 
-    inline short ToShortPos(float n) {
+    short ToShortPos(float n) {
         return static_cast<short>(std::lroundf(n / drawing_scale));
     }
-    inline void BumpSessionID() { if (--session_id < 0) session_id = 7; }
+
+    void BumpSessionID() { if (--session_id < 0) session_id = 7; }
     void SendQueue();
 
     PingCircle ping_circle;
@@ -137,8 +137,8 @@ private:
     std::vector<GW::UI::CompassPoint> queue;
 
     Color color_drawings = 0;
-    Color color_shadowstep_line = 0;
-    Color color_shadowstep_line_maxrange = 0;
+    Color color_shadowstep_line = Colors::ARGB(155, 128, 0, 128);
+    Color color_shadowstep_line_maxrange = Colors::ARGB(255, 255, 0, 128);
     float maxrange_interp_begin = 0.85f;
     float maxrange_interp_end = 0.95f;
     bool reduce_ping_spam = false;

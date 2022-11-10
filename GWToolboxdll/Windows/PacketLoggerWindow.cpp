@@ -24,7 +24,7 @@
 #include <GWCA/Managers/MapMgr.h>
 
 #include <Logger.h>
-#include <GuiUtils.h>
+#include <Utils/GuiUtils.h>
 
 #include <Modules/Resources.h>
 #include <Windows/PacketLoggerWindow.h>
@@ -73,7 +73,7 @@ namespace {
     }
     void ExportMapInfo() {
         nlohmann::json json;
-        for (auto it : maps) {
+        for (const auto& it : maps) {
             json[it.first] = it.second->ToJson();
             delete it.second;
         }
@@ -130,6 +130,7 @@ struct NPCDialog {
 } npc_dialog;
 bool logger_enabled = false;
 bool log_packet_content = false;
+bool auto_ignore_packets = false;
 bool debug = false;
 uint32_t log_message_callback_identifier = 0;
 static volatile bool running;
@@ -216,7 +217,7 @@ static FieldType GetField(uint32_t type, uint32_t size, uint32_t count)
     case 11:
         switch (size) {
         case 1: return FieldType::Array8;
-        case 2: return FieldType::Array16;
+        case 2: return FieldType::Array32;
         case 4: return FieldType::Array32;
         }
     case 12:
@@ -260,6 +261,12 @@ static void Serialize(uint8_t** bytes, T* val)
     // b = (uint8_t*)(((uintptr_t)b + (sizeof(T) - 1)) & ~(sizeof(T) - 1));
     memcpy(val, b, sizeof(T));
     *bytes = b + sizeof(T);
+}
+
+static void PrintString(int length, wchar_t* str) {
+    for (int i = 0; i < length && str[i]; i++) {
+        printf(i > 0 ? " %04x" : "%04x", str[i]);
+    }
 }
 
 static void PrintField(FieldType field, uint32_t count, uint8_t** bytes, uint32_t indent)
@@ -333,8 +340,9 @@ static void PrintField(FieldType field, uint32_t count, uint8_t** bytes, uint32_
         PrintIndent(indent);
         wchar_t* str = reinterpret_cast<wchar_t*>(*bytes);
         size_t length = wcsnlen(str, count);
-        wprintf(L"String(%zu) \"%.*s\"\n", length, static_cast<int>(length), str);
-        // PrintString(length, str);
+        printf("String(%zu) \"", length);
+        PrintString(length, str);
+        printf("\"\n");
         *bytes += (count * 2);
         break;
     }
@@ -356,15 +364,18 @@ static void PrintField(FieldType field, uint32_t count, uint8_t** bytes, uint32_
     }
     case FieldType::Array16: {
         PrintIndent(indent);
-        uint32_t length;
+        uint32_t length = count;
         Serialize<uint32_t>(bytes, &length);
         uint8_t* end = *bytes + (count * 2);
-        printf("Array16(%u) {\n", length);
-        uint16_t val;
-        for (size_t i = 0; i < length; i++) {
-            Serialize<uint16_t>(bytes, &val);
-            PrintIndent(indent + 4);
-            printf("[%zu] => %u,\n", i, val);
+        printf("Array16(%u of %u) {\n", length, count);
+        if (length < 64) {
+            uint16_t val;
+            for (size_t i = 0; i < length; i++) {
+                Serialize<uint16_t>(bytes, &val);
+                PrintIndent(indent + 4);
+                printf("[%zu] => %u,\n", i, val);
+            }
+
         }
         printf("}\n");
         *bytes = end;
@@ -372,15 +383,18 @@ static void PrintField(FieldType field, uint32_t count, uint8_t** bytes, uint32_
     }
     case FieldType::Array32: {
         PrintIndent(indent);
-        uint32_t length;
-        uint8_t* end = *bytes + (count * 4);
+        uint32_t length = count;
         Serialize<uint32_t>(bytes, &length);
-        printf("Array32(%u) {\n", length);
-        uint32_t val;
-        for (size_t i = 0; i < length; i++) {
-            Serialize<uint32_t>(bytes, &val);
-            PrintIndent(indent + 4);
-            printf("[%zu] => %u,\n", i, val);
+        uint8_t* end = *bytes + (count * 4);
+        printf("Array32(%u of %u) {\n", length, count);
+        if (length < 128) {
+            uint32_t val;
+            for (size_t i = 0; i < length; i++) {
+                Serialize<uint32_t>(bytes, &val);
+                PrintIndent(indent + 4);
+                printf("[%zu] => %u,\n", i, val);
+            }
+
         }
         printf("}\n");
         *bytes = end;
@@ -453,6 +467,8 @@ void PacketLoggerWindow::PacketHandler(GW::HookStatus* status, GW::Packet::StoC:
     //if (packet->header == 95) return true;
     if (packet->header >= game_server_handler->size())
         return;
+    if (auto_ignore_packets)
+        ignored_packets[packet->header] = true;
     if (ignored_packets[packet->header])
         return;
 
@@ -552,7 +568,7 @@ std::string PacketLoggerWindow::PrefixTimestamp(std::string message) {
 
 void PacketLoggerWindow::AddMessageLog(const wchar_t* encoded) {
     std::wstring encoded_ws(encoded);
-    if (!encoded || message_log.find(encoded_ws) != message_log.end())
+    if (!encoded || message_log.contains(encoded_ws))
         return;
     ForTranslation* t = new ForTranslation();
     t->in = encoded;
@@ -565,7 +581,7 @@ void PacketLoggerWindow::SaveMessageLog() {
     std::wofstream myFile(filename.bytes);
 
     // Send column names to the stream
-    for (auto it : message_log)
+    for (const auto& it : message_log)
     {
         if (!it.second || !it.second->length())
             continue;
@@ -579,9 +595,8 @@ void PacketLoggerWindow::SaveMessageLog() {
 }
 
 void PacketLoggerWindow::ClearMessageLog() {
-    for (auto it : message_log) {
-        if (it.second)
-            delete it.second;
+    for (const auto& it : message_log) {
+        delete it.second;
     }
     message_log.clear();
 }
@@ -604,7 +619,9 @@ void PacketLoggerWindow::Draw(IDirect3DDevice9* pDevice) {
     ImGui::ShowHelp("Log outgoing and incoming packet contents in debug console");
     ImGui::SameLine();
     ImGui::Checkbox("Log Packet Content", &log_packet_content);
-    
+    ImGui::SameLine();
+    ImGui::Checkbox("Auto ignore incoming packets", &auto_ignore_packets);
+    ImGui::ShowHelp("While ticked, any StoC packets received will be added to the ignore list.");
     /*if ( ImGui::Button("Export Map Info")) {
         if (maps.empty()) {
             FetchMapInfo();
@@ -797,7 +814,7 @@ void PacketLoggerWindow::Enable() {
         GW::StoC::RegisterPacketCallback(
             &hook_entry, i, [this](GW::HookStatus* status, GW::Packet::StoC::PacketBase* packet) -> void {
                 PacketHandler(status, packet);
-            }
+            }, -0x9000
         );
     }
     for (size_t i = 0; i < 180; i++) {

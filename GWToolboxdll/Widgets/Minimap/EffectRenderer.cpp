@@ -15,7 +15,7 @@
 #include <GWCA/Managers/AgentMgr.h>
 #include <GWCA/Managers/EffectMgr.h>
 
-#include <GuiUtils.h>
+#include <Utils/GuiUtils.h>
 #include <Widgets/Minimap/EffectRenderer.h>
 
 namespace {
@@ -56,48 +56,47 @@ void EffectRenderer::LoadDefaults() {
     aoe_effect_triggers.emplace(Spike_Trap_Activate, new EffectTrigger(Spike_Trap, 2000, GW::Constants::Range::Nearby));
 }
 EffectRenderer::~EffectRenderer() {
-    for (auto settings : aoe_effect_settings) {
+    for (const auto& settings : aoe_effect_settings) {
         delete settings.second;
     }
     aoe_effect_settings.clear();
-    for (auto triggers : aoe_effect_triggers) {
+    for (const auto& triggers : aoe_effect_triggers) {
         delete triggers.second;
     }
     aoe_effect_triggers.clear();
 }
 void EffectRenderer::Invalidate() {
     VBuffer::Invalidate();
-    for (auto p : aoe_effects) {
+    for (const auto p : aoe_effects) {
         delete p;
     }
     aoe_effects.clear();
-    for (auto trigger : aoe_effect_triggers) {
+    for (const auto& trigger : aoe_effect_triggers) {
         trigger.second->triggers_handled.clear();
     }
 }
 void EffectRenderer::LoadSettings(CSimpleIni* ini, const char* section) {
     Invalidate();
     LoadDefaults();
-    for (auto settings : aoe_effect_settings) {
+    for (const auto& settings : aoe_effect_settings) {
         char color_buf[64];
         sprintf(color_buf, "color_aoe_effect_%d", settings.first);
         settings.second->color = Colors::Load(ini, section, color_buf, settings.second->color);
     }
 }
 void EffectRenderer::SaveSettings(CSimpleIni* ini, const char* section) const {
-    for (auto settings : aoe_effect_settings) {
+    for (const auto& settings : aoe_effect_settings) {
         char color_buf[64];
         sprintf(color_buf, "color_aoe_effect_%d", settings.first);
         Colors::Save(ini, section, color_buf, settings.second->color);
     }
 }
 void EffectRenderer::DrawSettings() {
-    const float offset = ImGui::GetIO().FontGlobalScale * 150.0f;
     bool confirm = false;
     if (ImGui::SmallConfirmButton("Restore Defaults", &confirm)) {
         LoadDefaults();
     }
-    for (auto s : aoe_effect_settings) {
+    for (const auto& s : aoe_effect_settings) {
         ImGui::PushID(static_cast<int>(s.first));
         Colors::DrawSettingHueWheel("", &s.second->color, 0);
         ImGui::SameLine();
@@ -144,16 +143,16 @@ void EffectRenderer::RemoveTriggeredEffect(uint32_t effect_id, GW::Vec2f* pos) {
 
 void EffectRenderer::PacketCallback(GW::Packet::StoC::GenericValue* pak) {
     if (!initialized) return;
-    if (pak->Value_id != 21) // Effect on agent
+    if (pak->value_id != 21) // Effect on agent
         return;
     auto it = aoe_effect_settings.find(pak->value);
     if (it == aoe_effect_settings.end())
         return;
-    auto settings = it->second;
+    const auto settings = it->second;
     if (settings->stoc_header && settings->stoc_header != pak->header)
         return;
-    GW::AgentLiving* caster = static_cast<GW::AgentLiving * >(GW::Agents::GetAgentByID(pak->agent_id));
-    if (!caster || caster->allegiance != 0x3) return;
+    const auto* caster = static_cast<GW::AgentLiving*>(GW::Agents::GetAgentByID(pak->agent_id));
+    if (!caster || caster->allegiance != GW::Constants::Allegiance::Enemy) return;
     aoe_effects.push_back(new Effect(pak->value, caster->pos.x, caster->pos.y, settings->duration, settings->range, &settings->color));
 }
 void EffectRenderer::PacketCallback(GW::Packet::StoC::GenericValueTarget* pak) {
@@ -168,7 +167,7 @@ void EffectRenderer::PacketCallback(GW::Packet::StoC::GenericValueTarget* pak) {
         return;
     if (pak->caster == pak->target) return;
     GW::AgentLiving* caster = static_cast<GW::AgentLiving*>(GW::Agents::GetAgentByID(pak->caster));
-    if (!caster || caster->allegiance != 0x3) return;
+    if (!caster || caster->allegiance != GW::Constants::Allegiance::Enemy) return;
     GW::Agent* target = GW::Agents::GetAgentByID(pak->target);
     if (!target) return;
     aoe_effects.push_back(new Effect(pak->value, target->pos.x, target->pos.y, settings->duration, settings->range, &settings->color));
@@ -185,7 +184,7 @@ void EffectRenderer::PacketCallback(GW::Packet::StoC::PlayEffect* pak) {
     if (settings->stoc_header && settings->stoc_header != pak->header)
         return;
     GW::AgentLiving* a = static_cast<GW::AgentLiving*>(GW::Agents::GetAgentByID(pak->agent_id));
-    if (!a || a->allegiance != 0x3) return;
+    if (!a || a->allegiance != GW::Constants::Allegiance::Enemy) return;
     aoe_effects.push_back(new Effect(pak->effect_id, pak->coords.x, pak->coords.y, settings->duration, settings->range, &settings->color));
 }
 void EffectRenderer::Initialize(IDirect3DDevice9* device) {
@@ -214,7 +213,6 @@ void EffectRenderer::DrawAoeEffects(IDirect3DDevice9* device) {
     }
     if (aoe_effects.empty())
         return;
-    D3DXMATRIX translate, scale, world;
     std::lock_guard<std::recursive_mutex> lock(effects_mutex);
     size_t effect_size = aoe_effects.size();
     for (size_t i = 0; i < effect_size; i++) {
@@ -228,10 +226,10 @@ void EffectRenderer::DrawAoeEffects(IDirect3DDevice9* device) {
             effect_size--;
             continue;
         }
-        D3DXMatrixScaling(&scale, effect->circle.range, effect->circle.range, 1.0f);
-        D3DXMatrixTranslation(&translate, effect->pos.x, effect->pos.y, 0.0f);
-        world = scale * translate;
-        device->SetTransform(D3DTS_WORLD, &world);
+        const auto translate = DirectX::XMMatrixTranslation(effect->pos.x, effect->pos.y, 0.0f);
+        const auto scale = DirectX::XMMatrixScaling(effect->circle.range, effect->circle.range, 1.0f);
+        auto world = scale * translate;
+        device->SetTransform(D3DTS_WORLD, reinterpret_cast<D3DMATRIX*>(&world));
         effect->circle.Render(device);
     }
 }
@@ -239,7 +237,7 @@ void EffectRenderer::DrawAoeEffects(IDirect3DDevice9* device) {
 void EffectRenderer::EffectCircle::Initialize(IDirect3DDevice9* device) {
     type = D3DPT_LINESTRIP;
     count = 16; // polycount
-    unsigned int vertex_count = count + 1;
+    const auto vertex_count = count + 1;
     D3DVertex* vertices = nullptr;
 
     if (buffer) buffer->Release();

@@ -4,16 +4,15 @@
 #include <GWCA/Managers/MapMgr.h>
 
 #include <Defines.h>
-#include <GuiUtils.h>
+#include <Utils/GuiUtils.h>
 #include <GWToolbox.h>
+#include <PluginManager.h>
 
 #include <Modules/ChatCommands.h>
-#include <Modules/GameSettings.h>
 #include <Modules/Resources.h>
 #include <Modules/ToolboxSettings.h>
 #include <Modules/ToolboxTheme.h>
 #include <Modules/Updater.h>
-#include <Windows/MainWindow.h>
 #include <Windows/SettingsWindow.h>
 
 void SettingsWindow::LoadSettings(CSimpleIni* ini) {
@@ -38,7 +37,7 @@ void SettingsWindow::Draw(IDirect3DDevice9* pDevice) {
 
     if (!visible) return;
     ImGui::SetNextWindowCenter(ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowSize(ImVec2(450, 600), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(768, 768), ImGuiCond_FirstUseEver);
     if (ImGui::Begin(Name(), GetVisiblePtr(), GetWinFlags())) {
         drawn_settings.clear();
         ImColor sCol(102, 187, 238, 255);
@@ -56,7 +55,7 @@ void SettingsWindow::Draw(IDirect3DDevice9* pDevice) {
         } else {
             const std::string server_version = Updater::Instance().GetServerVersion();
             if (!server_version.empty()) {
-                if (server_version.compare(GWTOOLBOXDLL_VERSION) == 0) {
+                if (server_version == GWTOOLBOXDLL_VERSION) {
                     ImGui::SameLine();
                     ImGui::Text("(Up to date)");
                 } else {
@@ -68,7 +67,7 @@ void SettingsWindow::Draw(IDirect3DDevice9* pDevice) {
             ImGui::SameLine();
             ImGui::Text("(Debug)");
 #endif
-        float w = (ImGui::GetWindowContentRegionWidth() - ImGui::GetStyle().ItemSpacing.x) / 2;
+        float w = (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x) / 2;
         if (ImGui::Button("Open Settings Folder", ImVec2(w, 0))) {
             CoInitializeEx(NULL, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
             ShellExecuteW(NULL, L"open", Resources::GetSettingsFolderPath().c_str(), NULL, NULL, SW_SHOWNORMAL);
@@ -84,6 +83,9 @@ void SettingsWindow::Draw(IDirect3DDevice9* pDevice) {
         ImGui::Checkbox("Hide Settings when entering explorable area", &hide_when_entering_explorable);
 
         ImGui::Text("General:");
+
+        GWToolbox::Instance().GetPluginManger().Draw();
+
         if (ImGui::CollapsingHeader("Help")) {
             if (ImGui::TreeNodeEx("General Interface", ImGuiTreeNodeFlags_FramePadding | ImGuiTreeNodeFlags_SpanAvailWidth)) {
                 ImGui::Bullet(); ImGui::Text("Double-click on the title bar to collapse a window.");
@@ -121,8 +123,8 @@ void SettingsWindow::Draw(IDirect3DDevice9* pDevice) {
                 ImGui::Bullet(); ImGui::Text("Send Chat hotkey to enter one of the commands above.");
                 ImGui::TreePop();
             }
-            for (unsigned i = 0; i < GWToolbox::Instance().GetModules().size(); ++i) {
-                GWToolbox::Instance().GetModules()[i]->DrawHelp();
+            for (const auto module : GWToolbox::Instance().GetModules()) {
+                module->DrawHelp();
             }
         }
 
@@ -153,35 +155,38 @@ void SettingsWindow::Draw(IDirect3DDevice9* pDevice) {
 
 bool SettingsWindow::DrawSettingsSection(const char* section)
 {
+    if (strcmp(section, "") == 0) return true;
     const auto& callbacks = ToolboxModule::GetSettingsCallbacks();
     const auto& icons = ToolboxModule::GetSettingsIcons();
 
     const auto& settings_section = callbacks.find(section);
     if (settings_section == callbacks.end()) return false;
-    if (drawn_settings.find(section) != drawn_settings.end()) return true; // Already drawn
+    if (drawn_settings.contains(section)) return true; // Already drawn
     drawn_settings[section] = true;
     
     static char buf[128];
     sprintf(buf, "      %s", section);
-    auto pos = ImGui::GetCursorScreenPos();
+    const auto pos = ImGui::GetCursorScreenPos();
     const bool& is_showing = ImGui::CollapsingHeader(buf, ImGuiTreeNodeFlags_AllowItemOverlap);
 
     const char* icon = nullptr;
-    auto it = icons.find(section);
-    if (it != icons.end()) icon = it->second;
+    if (const auto it = icons.find(section); it != icons.end())
+        icon = it->second;
     if (icon) {
         const auto& style = ImGui::GetStyle();
         const float text_offset_x = ImGui::GetTextLineHeightWithSpacing() + 4.0f; // TODO: find a proper number
         ImGui::GetWindowDrawList()->AddText(ImVec2(pos.x + text_offset_x, pos.y + style.ItemSpacing.y / 2), ImColor(style.Colors[ImGuiCol_Text]), icon);
     }
-
-    if (is_showing) ImGui::PushID(section);
+    
+    ImGui::PushID(section);
     size_t i = 0;
-    for (auto& entry : settings_section->second) {
-        if (i && is_showing) ImGui::Separator();
-        entry.second(&settings_section->first, is_showing);
+    for (const auto& [flt, setting_callback] : settings_section->second) {
+        //if (i && is_showing) ImGui::Separator();
+        ImGui::PushID(i);
+        setting_callback(&settings_section->first, is_showing);
         i++;
+        ImGui::PopID();
     }
-    if (is_showing) ImGui::PopID();
+    ImGui::PopID();
     return true;
 }

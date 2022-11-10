@@ -8,7 +8,7 @@ A ToolboxWindow is a module which also has an interface
 class ToolboxWindow : public ToolboxUIElement {
 public:
     bool IsWindow() const override { return true; }
-    char* TypeName() const override { return "window"; }
+    const char* TypeName() const override { return "window"; }
 
     virtual void Initialize() override {
         ToolboxUIElement::Initialize();
@@ -29,5 +29,5 @@ public:
         ini->SetBoolValue(Name(), VAR_NAME(show_closebutton), show_closebutton);
     }
 
-    ImGuiWindowFlags GetWinFlags(ImGuiWindowFlags flags = 0) const;
+    virtual ImGuiWindowFlags GetWinFlags(ImGuiWindowFlags flags = 0) const;
 };

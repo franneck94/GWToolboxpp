@@ -9,9 +9,10 @@
 #include <Utils/RateLimiter.h>
 
 class TradeWindow : public ToolboxWindow {
-    TradeWindow() {};
+    TradeWindow() = default;
     TradeWindow(const TradeWindow&) = delete;
-    ~TradeWindow();
+    ~TradeWindow() = default;
+
 public:
     static TradeWindow& Instance() {
         static TradeWindow instance;
@@ -19,7 +20,7 @@ public:
     }
 
     const char* Name() const override { return "Trade"; }
-    const char* Icon() const override { return ICON_FA_BALANCE_SCALE; }
+    const char8_t* Icon() const override { return ICON_FA_BALANCE_SCALE; }
 
     void Initialize() override;
     static void CmdPricecheck(const wchar_t* message, int argc, LPWSTR* argv);

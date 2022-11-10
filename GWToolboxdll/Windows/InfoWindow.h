@@ -7,14 +7,14 @@
 #include <GWCA\Managers\UIMgr.h>
 
 #include <Defines.h>
-#include <GuiUtils.h>
+#include <Utils/GuiUtils.h>
 #include <ToolboxWindow.h>
+#include <Modules/HallOfMonumentsModule.h>
 
 class InfoWindow : public ToolboxWindow {
-    InfoWindow() {};
-    ~InfoWindow() {
-        ClearAvailableDialogs();
-    };
+    InfoWindow() = default;
+    ~InfoWindow() = default;
+
 public:
     static InfoWindow& Instance() {
         static InfoWindow instance;
@@ -22,9 +22,10 @@ public:
     }
 
     const char* Name() const override { return "Info"; }
-    const char* Icon() const override { return ICON_FA_INFO_CIRCLE; }
+    const char8_t* Icon() const override { return ICON_FA_INFO_CIRCLE; }
 
     void Initialize() override;
+    void Terminate() override;
 
     void Draw(IDirect3DDevice9* pDevice) override;
     void Update(float delta) override;
@@ -47,59 +48,22 @@ private:
         Left
     };
 
-    struct AvailableDialog {
-        AvailableDialog(wchar_t* _message, uint32_t dialog_id) {
-            GW::UI::AsyncDecodeStr(_message, &msg_ws);
-            snprintf(dialog_buf, sizeof(dialog_buf), "0x%X", dialog_id);
-        };
-        std::wstring msg_ws;
-        std::string msg_s;
-        char dialog_buf[11];
-    };
-
-    std::vector<AvailableDialog*> available_dialogs;
-
-
     static const char* GetStatusStr(Status status);
 
     void PrintResignStatus(wchar_t *buffer, size_t size, size_t index, const wchar_t *player_name);
     void DrawResignlog();
 
-    void ClearAvailableDialogs() {
-        for (auto dialog : available_dialogs) {
-            delete dialog;
-        }
-        available_dialogs.clear();
-    }
-
-    struct ForDecode {
-        std::wstring enc_ws;
-        std::wstring dec_ws;
-        std::string dec_s;
-        inline void init(const wchar_t* enc) {
-            if (enc_ws == enc || !enc)
-                return;
-            enc_ws = enc;
-            enc_ws.clear();
-            dec_ws.clear();
-            dec_s.clear();
-            GW::UI::AsyncDecodeStr(enc, &dec_ws);
-        }
-        inline char* str() {
-            if (dec_s.empty() && !dec_ws.empty()) {
-                static std::wregex repl(L"<[^>]+>");
-                std::wstring ws_repl = std::regex_replace(dec_ws, repl, L"");
-                dec_s = GuiUtils::WStringToString(ws_repl);
-            }
-            return (char*)dec_s.c_str();
-        }
-    };
     void InfoField(const char* label, const char* fmt, ...);
     void EncInfoField(const char* label, const wchar_t* enc_string);
 
-    void DrawItemInfo(GW::Item* item, ForDecode* name, bool force_advanced = false);
+    void DrawSkillInfo(GW::Skill* skill, GuiUtils::EncString* name, bool force_advanced = false);
+    void DrawItemInfo(GW::Item* item, GuiUtils::EncString* name, bool force_advanced = false);
     void DrawAgentInfo(GW::Agent* agent);
+    void DrawGuildInfo(GW::Guild* guild);
+    void DrawHomAchievements(const GW::Player* player);
     DWORD mapfile = 0;
+
+    std::map<std::wstring,HallOfMonumentsAchievements*> target_achievements;
 
     std::vector<Status> status;
     std::vector<unsigned long> timestamp;
@@ -122,5 +86,7 @@ private:
 
     GW::HookEntry MessageCore_Entry;
     GW::HookEntry InstanceLoadFile_Entry;
-    GW::HookEntry OnDialog_Entry;
+    GW::HookEntry OnDialogBody_Entry;
+    GW::HookEntry OnDialogButton_Entry;
+    GW::HookEntry OnSendDialog_Entry;
 };

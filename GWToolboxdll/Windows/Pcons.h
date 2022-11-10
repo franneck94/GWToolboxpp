@@ -26,10 +26,11 @@ public:
     static bool suppress_drunk_emotes;
     static bool suppress_lunar_skills;
 
-    static std::vector<std::vector<clock_t>> reserved_bag_slots;
+    static std::array<std::array<clock_t, 25>, 22> reserved_bag_slots;
     static bool hide_city_pcons_in_explorable_areas;
 
 protected:
+
     Pcon(const char* chatname,
         const char* abbrevname,
         const char* ininame,
@@ -37,6 +38,8 @@ protected:
         WORD res_id, // you can use 0 and it will not load texture from resource, only from file.
         ImVec2 uv0, ImVec2 uv1, int threshold,
         const char* desc = nullptr);
+    Pcon(const wchar_t* file, int threshold = 20)
+        :Pcon(0, 0, 0, file, 0, { 0,0 }, { 1,1 }, threshold) {}
     Pcon(const Pcon&) = delete;
     virtual ~Pcon();
     bool* GetSettingsByName(const wchar_t* name);
@@ -46,11 +49,12 @@ protected:
     // Checks whether another pcon has reserved this slot.
     static bool IsSlotReservedForMove(size_t bagId, size_t slot);
 
+    void UpdateRefill();
+
     GW::Bag* pending_move_to_bag = nullptr;
     uint32_t pending_move_to_slot = 0;
     uint32_t pending_move_to_quantity = 0;
 public:
-    void Initialize();
     void Terminate();
 
     virtual void Draw(IDirect3DDevice9* device);
@@ -61,9 +65,8 @@ public:
                              size_t quantity = 0);
     static GW::Bag* GetBag(uint32_t bag_id);
     wchar_t* SetPlayerName();
-    // Fires off another thread to refill pcons. Sets refill_attempted to TRUE when finished.
-    void Refill();
-    void StopRefill();
+    // Pass true to start refill, or false to stop.
+    void Refill(bool do_refill = true);
     void SetEnabled(bool enabled);
     const bool IsEnabled() { return IsVisible() && *enabled; }
     virtual bool IsVisible() const;
@@ -79,7 +82,7 @@ public:
     bool pcon_quantity_checked = false;
     bool refilling = false; // Set when a refill is in progress. Dont touch.
     bool refill_attempted = false; // Set to true when refill thread has run for this map
-    int threshold = 0; 
+    int threshold = 0;
     bool visible = true;
     int quantity = 0;
     // Icon vars
@@ -89,12 +92,13 @@ public:
 
     clock_t timer = 0;
 
-    const char* const chat;
-    const char* const abbrev;
-    std::string desc;
-    const char* const ini;
+    std::string chat;
+    std::string abbrev;
+    std::string& description() { return desc; };
+    std::string ini;
 
 protected:
+    std::string desc;
     // Cycles through character's inventory to find a matching (incomplete) stack, or an empty pane.
     GW::Item* FindVacantStackOrSlotInInventory(GW::Item* likeItem = nullptr);
     GW::AgentLiving* player = nullptr;
@@ -115,26 +119,30 @@ protected:
 
     virtual bool CanUseByInstanceType() const;
     virtual bool CanUseByEffect() const = 0;
+    virtual void OnButtonClick() { Toggle(); }
     virtual size_t QuantityForEach(const GW::Item* item) const = 0;
 
 private:
-    IDirect3DTexture9* texture = nullptr;
-    const ImVec2 uv0;
-    const ImVec2 uv1;
+    IDirect3DTexture9** texture = nullptr;
+    const ImVec2 uv0 = { 0,0 };
+    const ImVec2 uv1 = { 1,1 };
 };
 
 // A generic Pcon has an item_id and effect_id
 class PconGeneric : public Pcon {
 public:
+    PconGeneric(const wchar_t* file, DWORD item, GW::Constants::SkillID effect, int threshold = 20)
+        :Pcon(file,  threshold),
+        itemID(item), effectID(effect) {}
     PconGeneric(const char* chat,
         const char* abbrev,
         const char* ini,
         const wchar_t* file,
         WORD res_id,
         ImVec2 uv0, ImVec2 uv1,
-        DWORD item, GW::Constants::SkillID effect, 
+        DWORD item, GW::Constants::SkillID effect,
         int threshold,
-            const char* desc = nullptr)
+        const char* desc = nullptr)
         : Pcon(chat, abbrev, ini, file, res_id, uv0, uv1, threshold, desc),
         itemID(item), effectID(effect) {}
     PconGeneric(const PconGeneric&) = delete;
@@ -142,6 +150,7 @@ public:
 protected:
     bool CanUseByEffect() const override;
     size_t QuantityForEach(const GW::Item* item) const override;
+    void OnButtonClick() override;
 
 private:
     const DWORD itemID;
@@ -157,7 +166,7 @@ public:
         const wchar_t* file,
         WORD res_id,
         ImVec2 uv0, ImVec2 uv1,
-        DWORD item, GW::Constants::SkillID effect, 
+        DWORD item, GW::Constants::SkillID effect,
         int threshold,
             const char* desc = nullptr)
         : PconGeneric(chat, abbrev, ini, file, res_id, uv0, uv1, item, effect, threshold, desc) {}
@@ -173,7 +182,7 @@ public:
         const char* ini,
         const wchar_t* file,
         WORD res_id,
-        ImVec2 uv0, ImVec2 uv1, 
+        ImVec2 uv0, ImVec2 uv1,
         int threshold,
             const char* desc = nullptr)
         : Pcon(chat, abbrev, ini, file, res_id, uv0, uv1, threshold, desc) {}
@@ -187,7 +196,10 @@ public:
 // Used only in outposts for refilling
 class PconRefiller : public PconCity {
 public:
-    
+    PconRefiller(const wchar_t* file, DWORD item, int threshold = 250)
+        : PconRefiller(0, 0, 0, file, 0, { 0,0 }, { 1,1 }, item, threshold) {
+        visible = false;
+    };
     PconRefiller(const char* chat,
         const char* abbrev,
         const char* ini,
@@ -240,7 +252,7 @@ public:
         const char* ini,
         const wchar_t* file,
         WORD res_id,
-        ImVec2 uv0, ImVec2 uv1, 
+        ImVec2 uv0, ImVec2 uv1,
         int threshold,
             const char* desc = nullptr)
         : Pcon(chat, abbrev, ini, file, res_id, uv0, uv1, threshold, desc) {}

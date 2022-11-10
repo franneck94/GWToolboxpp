@@ -5,9 +5,16 @@
 #include <ToolboxWindow.h>
 #include <ToolboxUIElement.h>
 
+namespace GW {
+    namespace Constants {
+        enum class QuestID;
+    }
+}
+
 class DailyQuests : public ToolboxWindow {
-    DailyQuests() {};
-    ~DailyQuests() {};
+    DailyQuests() = default;
+    ~DailyQuests() = default;
+
 public:
     static DailyQuests& Instance() {
         static DailyQuests instance;
@@ -15,7 +22,7 @@ public:
     }
 
     const char* Name() const override { return "Daily Quests"; }
-    const char* Icon() const override { return ICON_FA_CALENDAR_ALT; }
+    const char8_t* Icon() const override { return ICON_FA_CALENDAR_ALT; }
 
     void Initialize() override;
     void LoadSettings(CSimpleIni* ini) override;
@@ -65,4 +72,8 @@ private:
     static void CmdZaishenVanquish(const wchar_t *message, int argc, LPWSTR *argv);
     static void CmdVanguard(const wchar_t *message, int argc, LPWSTR *argv);
     static void CmdNicholas(const wchar_t *message, int argc, LPWSTR *argv);
+
+    class ZaishenMission {
+        ZaishenMission(GW::Constants::QuestID _quest_id, GW::Constants::MapID _map_id);
+    };
 };

@@ -2,6 +2,44 @@
 
 #include "Str.h"
 
+int StrSprintf(std::string& out, const char* fmt, ...) {
+    va_list args;
+    va_start(args, fmt);
+    int written = StrVsprintf(out, fmt, args);
+    va_end(args);
+    return written;
+}
+int StrVsprintf(std::string& out, const char* fmt, va_list args) {
+    int written = vsnprintf(nullptr, 0, fmt, args);
+    if (written < 0)
+        return written;
+    out.resize(written + 1);
+    written = vsnprintf(out.data(), out.capacity(), fmt, args);
+    if (written < 0)
+        return written;
+    out.resize(written);
+    return written;
+}
+
+int StrSwprintf(std::wstring& out, const wchar_t* fmt, ...) {
+    va_list args;
+    va_start(args, fmt);
+    int written = StrVswprintf(out, fmt, args);
+    va_end(args);
+    return written;
+}
+int StrVswprintf(std::wstring& out, const wchar_t* fmt, va_list args) {
+    int written = vswprintf(nullptr, 0, fmt, args);
+    if (written < 0)
+        return written;
+    out.resize(written + 1);
+    written = vswprintf(out.data(), out.capacity(), fmt, args);
+    if (written < 0)
+        return written;
+    out.resize(written);
+    return written;
+}
+
 void StrCopyA(char *dest, size_t size, const char *src)
 {
     size_t i;

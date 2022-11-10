@@ -12,7 +12,7 @@
 #include <GWCA/Managers/GameThreadMgr.h>
 
 #include <Logger.h>
-#include <GuiUtils.h>
+#include <Utils/GuiUtils.h>
 
 #include <Modules/Resources.h>
 #include <Windows/SkillListingWindow.h>
@@ -79,11 +79,11 @@ void SkillListingWindow::ExportToJSON() {
     nlohmann::json json;
     for (size_t i = 0; i < skills.size(); i++) {
         if (!skills[i]) continue;
-        json[skills[i]->skill->skill_id] = skills[i]->ToJson();
+        json[(uint32_t)skills[i]->skill->skill_id] = skills[i]->ToJson();
     }
-    std::wstring file_location = Resources::GetPath(L"skills.json");
-    if (PathFileExistsW(file_location.c_str())) {
-        DeleteFileW(file_location.c_str());
+    auto file_location = Resources::GetPath(L"skills.json");
+    if (std::filesystem::exists(file_location)) {
+        std::filesystem::remove(file_location);
     }
 
     std::ofstream out(file_location);
@@ -91,11 +91,11 @@ void SkillListingWindow::ExportToJSON() {
     out.close();
     wchar_t file_location_wc[512];
     size_t msg_len = 0;
-    const wchar_t* message = file_location.c_str();
+    auto message = file_location.wstring();
 
     size_t max_len = _countof(file_location_wc) - 1;
     
-    for (size_t i = 0; i < file_location.length(); i++) {
+    for (size_t i = 0; i < message.length(); i++) {
         // Break on the end of the message
         if (!message[i])
             break;
@@ -113,12 +113,20 @@ void SkillListingWindow::ExportToJSON() {
 }
 void SkillListingWindow::Initialize() {
     ToolboxWindow::Initialize();
-    skills.resize((size_t)GW::Constants::SkillID::Count);
+    skills.resize((size_t)GW::Constants::SkillID::Count,0);
     for (size_t i = 0; i < skills.size(); i++) {
-        GW::Skill* s = &GW::SkillbarMgr::GetSkillConstantData(i);
-        if (!s || !s->skill_id || !s->skill_equip_type) continue;
+        GW::Skill* s = GW::SkillbarMgr::GetSkillConstantData((GW::Constants::SkillID)i);
+        if (!s || s->skill_id == (GW::Constants::SkillID)0) continue;
         skills[i] = new Skill(s);
     }
+}
+void SkillListingWindow::Terminate()
+{
+    ToolboxWindow::Terminate();
+    for (const auto skill : skills) {
+        if (skill) delete skill;
+    }
+    skills.clear();
 }
 void SkillListingWindow::Draw(IDirect3DDevice9* pDevice) {
     UNREFERENCED_PARAMETER(pDevice);
@@ -130,11 +138,10 @@ void SkillListingWindow::Draw(IDirect3DDevice9* pDevice) {
         return ImGui::End();
     float offset = 0.0f;
     const float tiny_text_width = 50.0f * ImGui::GetIO().FontGlobalScale;
-    const float short_text_width = 80.0f * ImGui::GetIO().FontGlobalScale;
-    const float avail_width = ImGui::GetContentRegionAvail().x;
     const float long_text_width = 200.0f * ImGui::GetIO().FontGlobalScale;
+
     ImGui::Text("#");
-    ImGui::SameLine(offset += tiny_text_width);
+    ImGui::SameLine(offset += tiny_text_width + tiny_text_width);
     ImGui::Text("Name");
     ImGui::SameLine(offset += long_text_width);
     ImGui::Text("Attr");
@@ -152,10 +159,12 @@ void SkillListingWindow::Draw(IDirect3DDevice9* pDevice) {
         if (!skills[i]) continue;
         if (!search_term.empty() && GuiUtils::ToLower(skills[i]->Name()).find(search_term) == std::wstring::npos)
             continue;
+        offset = 0;
         ImGui::Text("%d", i);
         if (!ImGui::IsItemVisible())
             continue;
-        offset = 0;
+        ImGui::SameLine(offset += tiny_text_width);
+        ImGui::ImageCropped(*Resources::GetSkillImage(skills[i]->skill->skill_id), { 20.f,20.f });        
         ImGui::SameLine(offset += tiny_text_width);
         ImGui::Text("%S",skills[i]->Name());
         if (ImGui::IsItemHovered())
@@ -166,6 +175,17 @@ void SkillListingWindow::Draw(IDirect3DDevice9* pDevice) {
         ImGui::Text("%s", GW::Constants::GetProfessionAcronym((GW::Constants::Profession)skills[i]->skill->profession).c_str());
         ImGui::SameLine(offset += tiny_text_width);
         ImGui::Text("%d", skills[i]->skill->type);
+        ImGui::SameLine();
+        char buf2[32];
+        snprintf(buf2, _countof(buf2), "Wiki###wiki_%d", i);
+        if (ImGui::SmallButton(buf2)) {
+            char* url = new char[128];
+            snprintf(url, 128, "https://wiki.guildwars.com/wiki/Game_link:Skill_%d", skills[i]->skill->skill_id);
+            GW::GameThread::Enqueue([url]() {
+                GW::UI::SendUIMessage(GW::UI::UIMessage::kOpenWikiUrl, url);
+                delete[] url;
+                });            
+        }
     }
     if (ImGui::Button("Export to JSON"))
         ExportToJSON();
@@ -178,13 +198,13 @@ nlohmann::json SkillListingWindow::Skill::ToJson() {
     json["cd"] = GuiUtils::WStringToString(GWWConcise());
     json["t"] = skill->type;
     json["p"] = skill->profession;
-    json["a"] = IsPvE() ? 255 - skill->h002A[0] : skill->attribute;
+    json["a"] = IsPvE() ? 255 - skill->title : skill->attribute;
     if (IsElite())
         json["e"] = 1;
     json["c"] = skill->campaign;
     nlohmann::json z_json;
     if (HasExhaustion())
-        z_json["x"] = skill->h0034;
+        z_json["x"] = skill->overcast;
     if (skill->recharge)
         z_json["r"] = skill->recharge;
     if (skill->activation)
@@ -206,7 +226,7 @@ nlohmann::json SkillListingWindow::Skill::ToJson() {
 }
 const std::wstring SkillListingWindow::Skill::GetSkillType() {
     std::wstring str(IsElite() ? L"Elite " : L"");
-    switch (skill->type) {
+    switch ((uint32_t)skill->type) {
         case 3:
             return str += L"Stance", str;
         case 4:
@@ -308,7 +328,7 @@ const wchar_t *SkillListingWindow::Skill::Description()
 const wchar_t *SkillListingWindow::Skill::Concise()
 {
     if (!concise_enc[0] &&
-        GW::UI::UInt32ToEncStr(skill->h0098, concise_enc, 16)) {
+        GW::UI::UInt32ToEncStr(skill->concise, concise_enc, 16)) {
         wchar_t buf[64] = {0};
         swprintf(
             buf, 64,

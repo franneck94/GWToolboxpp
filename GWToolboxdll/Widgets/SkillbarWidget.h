@@ -5,11 +5,10 @@
 
 class SkillbarWidget final : public ToolboxWidget
 {
-    SkillbarWidget()
-    {
+    SkillbarWidget() {
         is_resizable = false;
-    };
-    ~SkillbarWidget(){};
+    }
+    ~SkillbarWidget() = default;
 
 public:
     static SkillbarWidget &Instance()
@@ -22,7 +21,7 @@ public:
     {
         return "Skillbar";
     }
-    const char* Icon() const override { return ICON_FA_HISTORY; }
+    const char8_t* Icon() const override { return ICON_FA_HISTORY; }
 
     void LoadSettings(CSimpleIni *ini) override;
     void SaveSettings(CSimpleIni *ini) override;
@@ -52,7 +51,7 @@ private:
     std::array<Skill, 8> m_skills{};
 
     // Overall settings
-    enum Layout
+    enum class Layout
     {
         Row,
         Rows,
@@ -60,8 +59,8 @@ private:
         Columns
     };
     Layout layout = Layout::Row;
-    int m_skill_width = 50;
-    int m_skill_height = 50;
+    float m_skill_width = 50.f;
+    float m_skill_height = 50.f;
 
     // duration -> color settings
     int medium_treshold = 5000; // long to medium color
@@ -100,8 +99,8 @@ private:
 
     // Internal utils
     Color UptimeToColor(uint32_t uptime) const;
-    void skill_cooldown_to_string(char* arr, uint32_t cooldown) const;
-    static std::vector<Effect> get_effects(uint32_t skillId);
-    static Effect get_longest_effect(uint32_t skillId);
+    static std::vector<Effect> get_effects(GW::Constants::SkillID skillId);
+    static Effect get_longest_effect(GW::Constants::SkillID skillId);
+    void skill_cooldown_to_string(char arr[16], uint32_t cd) const;
     void DrawDurationThresholds();
 };

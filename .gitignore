@@ -5,6 +5,19 @@ ipch/
 Archive/
 bin/
 
+# Cmake generated
+_deps/
+*.vcxproj
+*.vcxproj.filters
+*.sln
+*CMakeFiles*
+CMakeCache.txt
+*cmake_install.cmake
+*.tlog
+*.recipe
+*.lib
+*.res
+
 # Bloated Windows Databases
 *.sdf
 *.opensdf
@@ -24,6 +37,9 @@ bin/
 *.o
 *.obj
 *.exe
+*.wxs
+*.wixobj
+*.msi
 
 # Precompiled Headers
 *.gch
@@ -31,6 +47,7 @@ bin/
 *.idb
 *.pdb
 *.opendb
+*.wixpdb
 
 # Visual studio stuff
 *.user
@@ -46,3 +63,6 @@ GWToolbox.aps
 *.sublime-workspace*
 .vs/
 build/
+
+# VSCode stuff
+.vscode/

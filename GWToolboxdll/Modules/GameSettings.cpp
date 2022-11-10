@@ -1,101 +1,80 @@
 #include "stdafx.h"
 
-#include <GWCA/Constants/Skills.h>
 #include <GWCA/Utilities/Scanner.h>
 
 #include <GWCA/GameContainers/Array.h>
 #include <GWCA/GameContainers/GamePos.h>
 
+#include <GWCA/Constants/AgentIDs.h>
+#include <GWCA/Constants/Constants.h>
+#include <GWCA/Constants/Skills.h>
+
+#include <GWCA/GameEntities/Item.h>
+#include <GWCA/GameEntities/Party.h>
+#include <GWCA/GameEntities/Skill.h>
+#include <GWCA/GameEntities/Agent.h>
+#include <GWCA/GameEntities/Player.h>
 #include <GWCA/GameEntities/Friendslist.h>
 #include <GWCA/GameEntities/Guild.h>
+#include <GWCA/GameEntities/Quest.h>
 #include <GWCA/GameEntities/Camera.h>
-#include <GWCA/GameEntities/Skill.h>
+#include <GWCA/GameEntities/Map.h>
+#include <GWCA/GameEntities/Title.h>
+#include <GWCA/GameEntities/Hero.h>
 
-#include <GWCA/Context/ItemContext.h>
-#include <GWCA/Context/PartyContext.h>
 #include <GWCA/Context/GuildContext.h>
-
-#include <GWCA/Constants/AgentIDs.h>
+#include <GWCA/Context/WorldContext.h>
 
 #include <GWCA/Managers/UIMgr.h>
 #include <GWCA/Managers/MapMgr.h>
-#include <GWCA/Managers/GuildMgr.h>
 #include <GWCA/Managers/StoCMgr.h>
-#include <GWCA/Managers/CtoSMgr.h>
-
 #include <GWCA/Managers/PartyMgr.h>
 #include <GWCA/Managers/CameraMgr.h>
 #include <GWCA/Managers/MemoryMgr.h>
-#include <GWCA/Managers/RenderMgr.h>
 #include <GWCA/Managers/FriendListMgr.h>
 #include <GWCA/Managers/GameThreadMgr.h>
 #include <GWCA/Managers/SkillbarMgr.h>
 #include <GWCA/Managers/EffectMgr.h>
+#include <GWCA/Managers/ChatMgr.h>
+#include <GWCA/Managers/AgentMgr.h>
+#include <GWCA/Managers/PlayerMgr.h>
+#include <GWCA/Managers/ItemMgr.h>
 
-#include <GWCA/Utilities/Scanner.h>
 #include <GWCA/Utilities/Hooker.h>
 
+#include <Utils/GuiUtils.h>
+#include <Utils/ToolboxUtils.h>
+
+#ifdef _DEBUG
+#include <Windows/StringDecoderWindow.h>
+#endif
+
+#include <Modules/GameSettings.h>
+#include <Modules/DialogModule.h>
+
 #include <Logger.h>
-#include <GuiUtils.h>
 #include <GWToolbox.h>
 #include <Timer.h>
 #include <Color.h>
-
-#include <Windows/StringDecoderWindow.h>
-#include <Modules/GameSettings.h>
+#include <hidusage.h>
 
 #pragma warning(disable : 6011)
 
+using namespace GuiUtils;
+using namespace ToolboxUtils;
+
 namespace {
-    void SendChatCallback(GW::HookStatus *, GW::Chat::Channel chan, wchar_t msg[120]) {
-        if (!GameSettings::Instance().auto_url || !msg) return;
-        size_t len = wcslen(msg);
-        size_t max_len = 120;
 
-        if (chan == GW::Chat::Channel::CHANNEL_WHISPER) {
-            // msg == "Whisper Target Name,msg"
-            size_t i;
-            for (i = 0; i < len; i++)
-                if (msg[i] == ',')
-                    break;
+    GW::MemoryPatcher ctrl_click_patch;
+    GW::MemoryPatcher tome_patch;
+    GW::MemoryPatcher gold_confirm_patch;
+    GW::MemoryPatcher item_description_patch;
+    GW::MemoryPatcher item_description_patch2;
 
-            if (i < len) {
-                msg += i + 1;
-                len -= i + 1;
-                max_len -= i + 1;
-            }
-        }
-
-        if (wcsncmp(msg, L"http://", 7) && wcsncmp(msg, L"https://", 8)) return;
-
-        if (len + 5 < max_len) {
-            for (size_t i = len; i != 0; --i)
-                msg[i] = msg[i - 1];
-            msg[0] = '[';
-            msg[len + 1] = ';';
-            msg[len + 2] = 'x';
-            msg[len + 3] = 'x';
-            msg[len + 4] = ']';
-            msg[len + 5] = 0;
-        }
+    GameSettings& Instance() {
+        return GameSettings::Instance();
     }
 
-    void FlashWindow() {
-        FLASHWINFO flashInfo = { 0 };
-        flashInfo.cbSize = sizeof(FLASHWINFO);
-        flashInfo.hwnd = GW::MemoryMgr::GetGWWindowHandle();
-        if (!flashInfo.hwnd) return;
-        flashInfo.dwFlags = FLASHW_TIMER | FLASHW_TRAY | FLASHW_TIMERNOFG;
-        flashInfo.uCount = 0;
-        flashInfo.dwTimeout = 0;
-        FlashWindowEx(&flashInfo);
-    }
-    void FocusWindow() {
-        HWND hwnd = GW::MemoryMgr::GetGWWindowHandle();
-        if (!hwnd) return;
-        SetForegroundWindow(hwnd);
-        ShowWindow(hwnd, SW_RESTORE);
-    }
 
     void PrintTime(wchar_t *buffer, size_t n, DWORD time_sec) {
         DWORD secs = time_sec % 60;
@@ -119,49 +98,11 @@ namespace {
             swprintf(buffer, n, L"%lu %s", time, time_unit);
         }
     }
-    
-    struct PartyInfo : GW::PartyInfo {
-        size_t GetPartySize() {
-            return players.size() + henchmen.size() + heroes.size();
-        }
-    };
-    static wchar_t* GetMessageCore() {
-        GW::Array<wchar_t>* buff = &GW::GameContext::instance()->world->message_buff;
-        return buff ? buff->begin() : nullptr;
-    }
-    static void ClearMessageCore() {
-        GW::Array<wchar_t>* buff = &GW::GameContext::instance()->world->message_buff;
-        if (buff && buff->valid())
-            buff->clear();
-    }
 
-    PartyInfo* GetPartyInfo(uint32_t party_id = 0) {
-        if (!party_id)
-            return (PartyInfo*)GW::PartyMgr::GetPartyInfo();
-        GW::PartyContext* p = GW::GameContext::instance()->party;
-        if (!p || !p->parties.valid() || party_id >= p->parties.size())
-            return nullptr;
-        return (PartyInfo*)p->parties[party_id];
-    }
-
-    const std::wstring GetPlayerName(uint32_t player_number = 0) {
-        GW::Player* player = nullptr;
-        if (!player_number) {
-            player = GW::PlayerMgr::GetPlayerByID(GW::PlayerMgr::GetPlayerNumber());
-            if (!player || !player->name) {
-                // Map not loaded; try to get from character context
-                auto* g = GW::GameContext::instance();
-                if (!g || !g->character || !g->character->player_name)
-                    return L"";
-                return g->character->player_name;
-            }
-        }
-        else {
-            player = GW::PlayerMgr::GetPlayerByID(player_number);
-        }
-        return player && player->name ? GuiUtils::SanitizePlayerName(player->name) : L"";
-    }
-
+    // For some reason no matter whether this call is wrapped in Draw or Update or main thread, it passes garbage to window title on first load.
+    // Even tried compiling in unicode, still no dice.
+    // I've given up trying, so here is a timer that triggers a 3s delay to do it in the Update loop, whatever
+    clock_t set_window_title_delay = 0;
     void SetWindowTitle(bool enabled) {
         if (!enabled)
             return;
@@ -172,27 +113,16 @@ namespace {
             SetWindowTextW(hwnd, title.c_str());
     }
 
-    GW::Player* GetPlayerByName(const wchar_t* _name) {
-        if (!_name) return NULL;
-        std::wstring name = GuiUtils::SanitizePlayerName(_name);
-        GW::PlayerArray& players = GW::PlayerMgr::GetPlayerArray();
-        for (GW::Player& player : players) {
-            if (!player.name) continue;
-            if (name == GuiUtils::SanitizePlayerName(player.name))
-                return &player;
-        }
-        return NULL;
-    }
+
 
     void WhisperCallback(GW::HookStatus *, const wchar_t *from, const wchar_t *msg) {
         UNREFERENCED_PARAMETER(msg);
-        GameSettings&  game_setting = GameSettings::Instance();
+        const GameSettings& game_setting = GameSettings::Instance();
         if (game_setting.flash_window_on_pm) FlashWindow();
-        auto const status = static_cast<GW::FriendStatus>(GW::FriendListMgr::GetMyStatus());
-        if (status == GW::FriendStatus::FriendStatus_Away && !game_setting.afk_message.empty()) {
+        auto const status = GW::FriendListMgr::GetMyStatus();
+        if (status == GW::FriendStatus::Away && !game_setting.afk_message.empty()) {
             wchar_t buffer[120];
-            // @Cleanup: Do without this cast
-            DWORD diff_time = static_cast<DWORD>((clock() - game_setting.afk_message_time) / CLOCKS_PER_SEC);
+            const auto diff_time = (clock() - game_setting.afk_message_time) / CLOCKS_PER_SEC;
             wchar_t time_buffer[128];
             PrintTime(time_buffer, 128, diff_time);
             swprintf(buffer, 120, L"Automatic message: \"%s\" (%s ago)", game_setting.afk_message.c_str(), time_buffer);
@@ -221,27 +151,39 @@ namespace {
         GW::Chat::Color sender, message;
         GW::Chat::GetDefaultColors(chan, &sender, &message);
         snprintf(key, 128, "%s_color_sender", chanstr);
-        sender = (GW::Chat::Color)Colors::Load(ini, section, key, (Color)sender);
+        sender = Colors::Load(ini, section, key, (Color)sender);
         GW::Chat::SetSenderColor(chan, sender);
         snprintf(key, 128, "%s_color_message", chanstr);
-        message = (GW::Chat::Color)Colors::Load(ini, section, key, (Color)message);
+        message = Colors::Load(ini, section, key, (Color)message);
         GW::Chat::SetMessageColor(chan, message);
     }
 
     struct PendingSendChatMessage {};
 
-    static clock_t last_send = 0;
-    static uint32_t last_dialog_npc_id = 0;
+    clock_t last_send = 0;
+    uint32_t last_dialog_npc_id = 0;
 
-    static clock_t instance_entered_at = 0;
+    clock_t instance_entered_at = 0;
 
-    static bool ctrl_enter_whisper = false;
+    bool ctrl_enter_whisper = false;
 
-    static bool IsInfused(GW::Item* item) {
+    bool disable_item_descriptions_in_outpost = false;
+    bool disable_item_descriptions_in_explorable = false;
+    bool hide_email_address = false;
+
+
+    bool IsInfused(GW::Item* item) {
         return item && item->info_string && wcschr(item->info_string, 0xAC9);
     }
 
-    const enum PING_PARTS {
+
+    bool IsOutpost() {
+        return GW::Map::GetInstanceType() == GW::Constants::InstanceType::Outpost;
+    }
+    bool IsExplorable() {
+        return GW::Map::GetInstanceType() == GW::Constants::InstanceType::Explorable;
+    }
+    enum PING_PARTS {
         NAME=1,
         DESC=2
     };
@@ -257,13 +199,14 @@ namespace {
             call_target = _call_target;
             cast_next_frame = false;
         }
-        const GW::AgentLiving* GetTarget() {
+        const GW::AgentLiving* GetTarget() const {
             const GW::AgentLiving* target = static_cast<GW::AgentLiving*>(GW::Agents::GetAgentByID(target_id));
             return target && target->GetIsLivingType() ? target : nullptr;
         }
-        const uint32_t GetSkill() {
+
+        GW::Constants::SkillID GetSkill() const {
             const GW::Skillbar* skillbar = GW::SkillbarMgr::GetPlayerSkillbar();
-            return skillbar && skillbar->IsValid() ? skillbar->skills[slot].skill_id : 0;
+            return skillbar && skillbar->IsValid() ? skillbar->skills[slot].skill_id : GW::Constants::SkillID::No_Skill;
         }
     } pending_cast;
 
@@ -273,12 +216,685 @@ namespace {
         uint32_t player_number;
     };
 
-    struct PartyTargetInfo {
-        uint32_t target_type = 0;
-        uint32_t is_party_member; // 1 or 0
-        uint32_t target_identifier;
-    } party_target_info;
+    struct SkillData {
+        GW::Constants::Profession primary;
+        GW::Constants::Profession secondary;
+        uint32_t attribute_count;
+        GW::Constants::Attribute attribute_keys[12];
+        uint32_t attribute_values[12];
+        GW::Constants::SkillID skill_ids[8];
+    };
 
+    // prophecies = factions
+    std::map<GW::Constants::SkillID, GW::Constants::SkillID> duplicate_skills = {
+        {GW::Constants::SkillID::Desperation_Blow, GW::Constants::SkillID::Drunken_Blow },
+        {GW::Constants::SkillID::Galrath_Slash, GW::Constants::SkillID::Silverwing_Slash },
+        {GW::Constants::SkillID::Griffons_Sweep, GW::Constants::SkillID::Leviathans_Sweep },
+        {GW::Constants::SkillID::Penetrating_Blow, GW::Constants::SkillID::Penetrating_Chop },
+        {GW::Constants::SkillID::Pure_Strike, GW::Constants::SkillID::Jaizhenju_Strike },
+
+        {GW::Constants::SkillID::Bestial_Pounce, GW::Constants::SkillID::Savage_Pounce },
+        {GW::Constants::SkillID::Dodge, GW::Constants::SkillID::Zojuns_Haste },
+        {GW::Constants::SkillID::Penetrating_Attack, GW::Constants::SkillID::Sundering_Attack },
+        {GW::Constants::SkillID::Point_Blank_Shot, GW::Constants::SkillID::Zojuns_Shot },
+        {GW::Constants::SkillID::Tigers_Fury, GW::Constants::SkillID::Bestial_Fury },
+
+        {GW::Constants::SkillID::Divine_Healing, GW::Constants::SkillID::Heavens_Delight },
+        {GW::Constants::SkillID::Heal_Area, GW::Constants::SkillID::Kareis_Healing_Circle },
+        {GW::Constants::SkillID::Heal_Other, GW::Constants::SkillID::Jameis_Gaze },
+        {GW::Constants::SkillID::Holy_Strike, GW::Constants::SkillID::Stonesoul_Strike },
+        {GW::Constants::SkillID::Symbol_of_Wrath, GW::Constants::SkillID::Kirins_Wrath },
+
+        {GW::Constants::SkillID::Desecrate_Enchantments, GW::Constants::SkillID::Defile_Enchantments },
+        {GW::Constants::SkillID::Shadow_Strike, GW::Constants::SkillID::Lifebane_Strike },
+        {GW::Constants::SkillID::Spinal_Shivers, GW::Constants::SkillID::Shivers_of_Dread },
+        {GW::Constants::SkillID::Touch_of_Agony, GW::Constants::SkillID::Wallows_Bite },
+        {GW::Constants::SkillID::Vampiric_Touch, GW::Constants::SkillID::Vampiric_Bite },
+
+        {GW::Constants::SkillID::Arcane_Thievery, GW::Constants::SkillID::Arcane_Larceny },
+        {GW::Constants::SkillID::Ethereal_Burden, GW::Constants::SkillID::Kitahs_Burden },
+        {GW::Constants::SkillID::Inspired_Enchantment, GW::Constants::SkillID::Revealed_Enchantment },
+        {GW::Constants::SkillID::Inspired_Hex, GW::Constants::SkillID::Revealed_Hex },
+        {GW::Constants::SkillID::Sympathetic_Visage, GW::Constants::SkillID::Ancestors_Visage },
+
+        {GW::Constants::SkillID::Earthquake, GW::Constants::SkillID::Dragons_Stomp }
+    };
+    // luxon = kurzick
+    std::map<GW::Constants::SkillID, GW::Constants::SkillID> factions_skills = {
+        {GW::Constants::SkillID::Save_Yourselves_luxon, GW::Constants::SkillID::Save_Yourselves_kurzick },
+        {GW::Constants::SkillID::Aura_of_Holy_Might_luxon, GW::Constants::SkillID::Aura_of_Holy_Might_kurzick },
+        {GW::Constants::SkillID::Elemental_Lord_luxon, GW::Constants::SkillID::Elemental_Lord_kurzick },
+        {GW::Constants::SkillID::Ether_Nightmare_luxon, GW::Constants::SkillID::Ether_Nightmare_kurzick },
+        {GW::Constants::SkillID::Selfless_Spirit_luxon, GW::Constants::SkillID::Selfless_Spirit_kurzick },
+        {GW::Constants::SkillID::Shadow_Sanctuary_luxon, GW::Constants::SkillID::Shadow_Sanctuary_kurzick },
+        {GW::Constants::SkillID::Signet_of_Corruption_luxon, GW::Constants::SkillID::Signet_of_Corruption_kurzick },
+        {GW::Constants::SkillID::Spear_of_Fury_luxon, GW::Constants::SkillID::Spear_of_Fury_kurzick },
+        {GW::Constants::SkillID::Summon_Spirits_luxon, GW::Constants::SkillID::Summon_Spirits_kurzick },
+        {GW::Constants::SkillID::Triple_Shot_luxon, GW::Constants::SkillID::Triple_Shot_kurzick }
+    };
+    struct LoadSkillBarPacket {
+        uint32_t header;
+        uint32_t agent_id;
+        uint32_t skill_ids_size = 8;
+        GW::Constants::SkillID skill_ids[8];
+    } skillbar_packet;
+
+    // Before the game loads the skill bar you want, copy the data over for checking once the bar is loaded.
+    void OnPreLoadSkillBar(GW::HookStatus*, GW::UI::UIMessage message_id, void* wparam, void*) {
+        ASSERT(message_id == GW::UI::UIMessage::kSendLoadSkillbar && wparam);
+        struct Pack {
+            uint32_t agent_id;
+            GW::Constants::SkillID skill_ids[8];
+        } *packet = (Pack*)wparam;
+        // @Enhancement: may cause weird stuff if we load loads of builds at once; heros could get mixed up with player. Use a map.
+        memcpy(skillbar_packet.skill_ids, packet->skill_ids, sizeof(skillbar_packet.skill_ids));
+        skillbar_packet.agent_id = packet->agent_id;
+    }
+
+    // Takes SkillData* ptr, rectifies any missing dupe skills. True if bar has been tweaked.
+    bool FixLoadSkillData(GW::Constants::SkillID* skill_ids) {
+        auto find_skill = [](GW::Constants::SkillID* skill_ids, GW::Constants::SkillID skill_id) {
+            for (int i = 0; i < 8; i++) {
+                if (skill_ids[i] == skill_id)
+                    return i;
+            }
+            return -1;
+        };
+        int found_first;
+        int found_second;
+        bool unlocked_first;
+        bool unlocked_second;
+        bool tweaked = false;
+        for (auto& skill : duplicate_skills) {
+            found_first = find_skill(skill_ids, skill.first);
+            found_second = find_skill(skill_ids, skill.second);
+            if (found_first == -1 && found_second == -1)
+                continue;
+            unlocked_first = GW::SkillbarMgr::GetIsSkillUnlocked(skill.first);
+            unlocked_second = GW::SkillbarMgr::GetIsSkillUnlocked(skill.second);
+
+            if (found_first != -1 && found_second == -1
+                && !unlocked_first && unlocked_second) {
+                // First skill found in build template, second skill not already in template, user only has second skill
+                skill_ids[found_first] = skill.second;
+                tweaked = true;
+            }
+            else if (found_second != -1 && found_first == -1
+                && !unlocked_second && unlocked_first) {
+                // Second skill found in build template, first skill not already in template, user only has first skill
+                skill_ids[found_second] = skill.first;
+                tweaked = true;
+            }
+        }
+        for (auto& skill : factions_skills) {
+            found_first = find_skill(skill_ids, skill.first);
+            found_second = find_skill(skill_ids, skill.second);
+            if (found_first == -1 && found_second == -1)
+                continue;
+            unlocked_first = GW::SkillbarMgr::GetIsSkillUnlocked(skill.first);
+            unlocked_second = GW::SkillbarMgr::GetIsSkillUnlocked(skill.second);
+
+            if (found_first != -1 && found_second == -1
+                && !unlocked_first && unlocked_second) {
+                // First skill found in build template, second skill not already in template, user only has second skill
+                skill_ids[found_first] = skill.second;
+                tweaked = true;
+            }
+            else if (found_second != -1 && found_first == -1
+                && !unlocked_second && unlocked_first) {
+                // Second skill found in build template, first skill not already in template, user only has first skill
+                skill_ids[found_second] = skill.first;
+                tweaked = true;
+            }
+            else if (unlocked_first && unlocked_second) {
+                // Find skill with higher title track
+                auto kurzick_title = GW::PlayerMgr::GetTitleTrack(GW::Constants::TitleID::Kurzick);
+                uint32_t kurzick_rank = kurzick_title ? kurzick_title->points_needed_current_rank : 0;
+                auto luxon_title = GW::PlayerMgr::GetTitleTrack(GW::Constants::TitleID::Luxon);
+                uint32_t luxon_rank = luxon_title ? luxon_title->points_needed_current_rank : 0;
+                if (kurzick_rank > luxon_rank) {
+                    skill_ids[std::max(found_first, found_second)] = skill.second;
+                    tweaked = true;
+                }
+                else if (kurzick_rank < luxon_rank) {
+                    skill_ids[std::max(found_first, found_second)] = skill.first;
+                    tweaked = true;
+                }
+            }
+        }
+        return tweaked;
+    }
+    // Checks loaded skillbar for any missing skills once the game has sent the packet
+    void OnPostLoadSkillBar(GW::HookStatus*, void* packet) {
+        LoadSkillBarPacket* post_pack = (LoadSkillBarPacket*)packet;
+        if (post_pack->agent_id != skillbar_packet.agent_id) {
+            skillbar_packet.agent_id = 0;
+            return;
+        }
+        if (skillbar_packet.agent_id && FixLoadSkillData(skillbar_packet.skill_ids)) {
+            GW::SkillbarMgr::LoadSkillbar(skillbar_packet.skill_ids,_countof(skillbar_packet.skill_ids),GW::PartyMgr::GetAgentHeroID(skillbar_packet.agent_id));
+        }
+        skillbar_packet.agent_id = 0;
+    }
+
+    typedef void(__cdecl* ShowAgentFactionGain_pt)(uint32_t agent_id, uint32_t stat_type, uint32_t amount_gained);
+    ShowAgentFactionGain_pt ShowAgentFactionGain_Func = nullptr;;
+    ShowAgentFactionGain_pt ShowAgentFactionGain_Ret = nullptr;
+    void OnShowAgentFactionGain(uint32_t agent_id, uint32_t stat_type, uint32_t amount_gained) {
+        GW::Hook::EnterHook();
+        const bool blocked = Instance().block_faction_gain;
+        if (!blocked)
+            ShowAgentFactionGain_Ret(agent_id, stat_type, amount_gained);
+        GW::Hook::LeaveHook();
+    }
+
+    typedef void(__cdecl* ShowAgentExperienceGain_pt)(uint32_t agent_id, uint32_t amount_gained);
+    ShowAgentExperienceGain_pt ShowAgentExperienceGain_Func = nullptr;
+    ShowAgentExperienceGain_pt ShowAgentExperienceGain_Ret = nullptr;
+    void OnShowAgentExperienceGain(uint32_t agent_id, uint32_t amount_gained) {
+        GW::Hook::EnterHook();
+        const bool blocked = (Instance().block_experience_gain || (Instance().block_zero_experience_gain && amount_gained == 0));
+        if (!blocked)
+            ShowAgentExperienceGain_Ret(agent_id, amount_gained);
+        GW::Hook::LeaveHook();
+    }
+
+    // Key held to show/hide item descriptions
+    const int modifier_key_item_descriptions = VK_MENU;
+    int modifier_key_item_descriptions_key_state = 0;
+
+    typedef void(__cdecl* GetItemDescription_pt)(uint32_t item_id, uint32_t flags, uint32_t quantity, uint32_t unk, wchar_t** out, wchar_t** out2);
+    GetItemDescription_pt GetItemDescription_Func = nullptr;
+    GetItemDescription_pt GetItemDescription_Ret = nullptr;
+    void OnGetItemDescription(uint32_t item_id, uint32_t flags, uint32_t quantity, uint32_t unk, wchar_t** name_out, wchar_t** description_out) {
+        GW::Hook::EnterHook();
+        bool block_description = (disable_item_descriptions_in_outpost && IsOutpost()) || (disable_item_descriptions_in_explorable && IsExplorable());
+        if (block_description && GetKeyState(modifier_key_item_descriptions) < 0)
+            block_description = false;
+        GetItemDescription_Ret(item_id, flags, quantity, unk, name_out, block_description ? nullptr : description_out);
+        GW::Hook::LeaveHook();
+    }
+
+    typedef void(__cdecl* SetGlobalNameTagVisibility_pt)(uint32_t flags);
+    SetGlobalNameTagVisibility_pt SetGlobalNameTagVisibility_Func = 0;
+    uint32_t* GlobalNameTagVisibilityFlags = 0;
+
+    GW::Player* GetPlayerByAgentId(uint32_t agent_id, GW::AgentLiving** info_out = nullptr) {
+        GW::AgentLiving* a = static_cast<GW::AgentLiving*>(GW::Agents::GetAgentByID(agent_id));
+        if (!(a && a->GetIsLivingType() && a->IsPlayer()))
+            return nullptr;
+        if (info_out)
+            *info_out = a;
+        return GW::PlayerMgr::GetPlayerByID(a->login_number);
+
+    }
+
+    bool IsHenchmanInParty(uint32_t agent_id, GW::HenchmanPartyMember** info_out = nullptr) {
+        auto* party = GW::PartyMgr::GetPartyInfo();
+        if (!party) return false;
+        for (auto p : party->henchmen) {
+            if (p.agent_id == agent_id) {
+                if (info_out)
+                    *info_out = &p;
+                return true;
+            }
+        }
+        return false;
+    }
+    bool IsHeroInParty(uint32_t agent_id, GW::HeroPartyMember** info_out = nullptr) {
+        auto* party = GW::PartyMgr::GetPartyInfo();
+        if (!party) return false;
+        for (auto& p : party->heroes) {
+            if (p.agent_id == agent_id) {
+                if (info_out)
+                    *info_out = &p;
+                return true;
+            }
+        }
+        return false;
+    }
+    bool IsPlayerInParty(uint32_t login_number, GW::PlayerPartyMember** info_out = nullptr) {
+        auto* party = GW::PartyMgr::GetPartyInfo();
+        if (!party)
+            return false;
+        for (auto& p : party->players) {
+            if (p.login_number == login_number) {
+                if (info_out)
+                    *info_out = &p;
+                return true;
+            }
+        }
+        return false;
+    }
+    bool IsAgentInParty(uint32_t agent_id) {
+        auto* party = GW::PartyMgr::GetPartyInfo();
+        if (!party)
+            return false;
+        if (IsHenchmanInParty(agent_id) || IsHeroInParty(agent_id))
+            return true;
+        auto player = GetPlayerByAgentId(agent_id);
+        return player && IsPlayerInParty(player->player_number);
+    }
+
+    // Refresh agent name tags when allegiance changes
+    void OnAgentAllegianceChanged(GW::HookStatus*, GW::Packet::StoC::AgentUpdateAllegiance*) {
+        // Backup the current name tag flag state, then "flash" nametags to update.
+        uint32_t prev_flags = *GlobalNameTagVisibilityFlags;
+        SetGlobalNameTagVisibility_Func(0);
+        SetGlobalNameTagVisibility_Func(prev_flags);
+        ASSERT(*GlobalNameTagVisibilityFlags == prev_flags);
+    }
+
+    GW::HeroInfo* GetHeroInfo(uint32_t hero_id) {
+        auto w = GW::WorldContext::instance();
+        if (!(w && w->hero_info.size()))
+            return nullptr;
+        for (auto& a : w->hero_info) {
+            if (a.hero_id == hero_id)
+                return &a;
+        }
+        return nullptr;
+    }
+    bool IsHenchman(uint32_t agent_id) {
+        if (!IsOutpost()) {
+            return IsHenchmanInParty(agent_id);
+        }
+        auto w = GW::WorldContext::instance();
+        if (!(w && w->henchmen_agent_ids.size()))
+            return false;
+        for (auto a : w->henchmen_agent_ids) {
+            if (a == agent_id)
+                return true;
+        }
+        return false;
+    }
+    bool IsHero(uint32_t agent_id, GW::HeroInfo** info_out = nullptr) {
+        if (!IsOutpost()) {
+            return IsHeroInParty(agent_id);
+        }
+        auto w = GW::WorldContext::instance();
+        if (!(w && w->hero_info.size()))
+            return false;
+        for (auto& a : w->hero_info) {
+            if (a.agent_id == agent_id) {
+                if (info_out)
+                    *info_out = &a;
+                return true;
+            }
+        }
+        return false;
+    }
+
+    uint32_t current_party_target_id = 0;
+    // Record current party target - this isn't always the same as the compass target.
+    void OnPartyTargetChanged(GW::HookStatus*, GW::UI::UIMessage message_id, void* wparam, void*) {
+        struct Packet {
+            uint32_t source;
+            uint32_t identifier;
+        } *party_target_info = (Packet*)wparam;
+        current_party_target_id = 0;
+        switch (message_id) {
+        case GW::UI::UIMessage::kTargetPlayerPartyMember: {
+            if (!IsPlayerInParty(party_target_info->identifier))
+                break;
+            const GW::Player* p = GW::PlayerMgr::GetPlayerByID(party_target_info->identifier);
+            if (p && p->agent_id) {
+                current_party_target_id = p->agent_id;
+            }
+        } break;
+        case GW::UI::UIMessage::kTargetNPCPartyMember: {
+            if (IsAgentInParty(party_target_info->identifier)) {
+                current_party_target_id = party_target_info->identifier;
+            }
+        } break;
+        }
+    }
+
+    struct PendingReinvite {
+        uint32_t identifier = 0;
+        enum class Stage {
+            None,
+            Kick,
+            InvitePlayer,
+            InviteHenchman,
+            InviteHero
+        } stage = Stage::None;
+        time_t start_ts = 0;
+        void reset(uint32_t _agent_id = 0) {
+            identifier = _agent_id;
+            stage = identifier ? Stage::Kick : Stage::None;
+            start_ts = TIMER_INIT();
+        }
+    } pending_reinvite;
+
+    // Handle processing from CmdReinvite command
+    void UpdateReinvite() {
+        if (pending_reinvite.stage == PendingReinvite::Stage::None)
+            return; // Nothing to do
+        if (!IsOutpost()) {
+            return pending_reinvite.reset();
+        }
+        if (TIMER_DIFF(pending_reinvite.start_ts) > 2000) {
+            // Timeout (map change etc)
+            return pending_reinvite.reset();
+        }
+        GW::Player* first_player = nullptr;
+        GW::Player* next_player = nullptr;
+        GW::AgentLiving* me = GW::Agents::GetPlayerAsAgentLiving();
+        if (!me) {
+            // Can't find myself
+            Log::Error("Failed to find me");
+            return pending_reinvite.reset();
+        }
+        GW::PartyInfo* party = GW::PartyMgr::GetPartyInfo();
+        if (!party || !party->players.valid()) {
+            // Can't find party
+            Log::Error("Failed to find party");
+            return pending_reinvite.reset();
+        }
+        // Find leader and next valid player
+        for (size_t i = 0; party->players.valid() && i < party->players.size(); i++) {
+            auto& member = party->players[i];
+            if (!member.connected())
+                continue;
+            if (!first_player) {
+                first_player = GW::PlayerMgr::GetPlayerByID(member.login_number);
+            }
+            else if (!next_player) {
+                next_player = GW::PlayerMgr::GetPlayerByID(member.login_number);
+                break;
+            }
+        }
+        if (!first_player) {
+            Log::Error("Failed to find party leader");
+            return pending_reinvite.reset();
+        }
+        if (next_player && next_player->player_number == me->login_number) {
+            // Swap next player to first player for reinviting myself
+            next_player = first_player;
+        }
+        bool is_leader = me->login_number == first_player->player_number;
+
+        switch (pending_reinvite.stage) {
+        case PendingReinvite::Stage::Kick: {
+            if (!IsAgentInParty(pending_reinvite.identifier)) {
+                Log::Error("Choose target party member to reinvite");
+                return pending_reinvite.reset();
+            }
+            // Player kick
+            GW::AgentLiving* target_living = 0;
+            if (GetPlayerByAgentId(pending_reinvite.identifier, &target_living)) {
+                if (target_living == me) {
+                    if (!next_player) {
+                        Log::Error("Couldn't find next player in party to re-join");
+                        return pending_reinvite.reset();
+                    }
+                    pending_reinvite.identifier = next_player->player_number;
+                    pending_reinvite.stage = PendingReinvite::Stage::InvitePlayer;
+                    GW::PartyMgr::LeaveParty();
+                    return;
+                }
+                if (!is_leader) {
+                    Log::Error("Only party leader can reinvite players");
+                    return pending_reinvite.reset();
+                }
+                pending_reinvite.identifier = target_living->player_number;
+                pending_reinvite.stage = PendingReinvite::Stage::InvitePlayer;
+                GW::PartyMgr::KickPlayer(target_living->login_number);
+                return;
+            }
+
+            // Hero kick
+            GW::HeroPartyMember* hero_info = 0;
+            if (IsHeroInParty(pending_reinvite.identifier, &hero_info)) {
+                if (hero_info->owner_player_id != me->login_number) {
+                    Log::Error("The targetted hero doesn't belong to you");
+                    return pending_reinvite.reset();
+                }
+                pending_reinvite.identifier = hero_info->hero_id;
+                GW::PartyMgr::KickHero(pending_reinvite.identifier);
+                pending_reinvite.stage = PendingReinvite::Stage::InviteHero;
+                return;
+            }
+            // Henchman kick
+            GW::HenchmanPartyMember* henchman_info = 0;
+            if (IsHenchmanInParty(pending_reinvite.identifier, &henchman_info)) {
+                if (!is_leader) {
+                    Log::Error("Only party leader can reinvite henchmen");
+                    return pending_reinvite.reset();
+                }
+                GW::PartyMgr::KickHenchman(pending_reinvite.identifier);
+                pending_reinvite.stage = PendingReinvite::Stage::InviteHenchman;
+                return;
+            }
+            Log::Error("Failed to determine agent type for %d", pending_reinvite.identifier);
+            return pending_reinvite.reset();
+        } break;
+        case PendingReinvite::Stage::InviteHero: {
+            GW::HeroInfo* hero_info = GetHeroInfo(pending_reinvite.identifier);
+            if (!hero_info) {
+                Log::Error("Failed to get hero info for %d", pending_reinvite.identifier);
+                return pending_reinvite.reset();
+            }
+            if (hero_info->agent_id && IsHeroInParty(hero_info->agent_id))
+                return;
+            GW::PartyMgr::AddHero(pending_reinvite.identifier);
+            return pending_reinvite.reset();
+        } break;
+        case PendingReinvite::Stage::InvitePlayer: {
+            GW::Player* player = GW::PlayerMgr::GetPlayerByID(pending_reinvite.identifier);
+            if (!player) {
+                Log::Error("Failed to get player info for %d", pending_reinvite.identifier);
+                return pending_reinvite.reset();
+            }
+            if (IsPlayerInParty(pending_reinvite.identifier))
+                return;
+            GW::PartyMgr::InvitePlayer(pending_reinvite.identifier);
+            return pending_reinvite.reset();
+        } break;
+        case PendingReinvite::Stage::InviteHenchman: {
+            if (!IsHenchman(pending_reinvite.identifier)) {
+                Log::Error("Failed to get henchman info for %d", pending_reinvite.identifier);
+                return pending_reinvite.reset();
+            }
+            if (IsHenchmanInParty(pending_reinvite.identifier))
+                return;
+            GW::PartyMgr::AddHenchman(pending_reinvite.identifier);
+            return pending_reinvite.reset();
+        } break;
+        }
+        pending_reinvite.reset();
+    }
+    // Check and re-render item tooltips if modifier key held
+    void UpdateItemTooltip() {
+        if (GetKeyState(modifier_key_item_descriptions) == modifier_key_item_descriptions_key_state)
+            return;
+        modifier_key_item_descriptions_key_state = GetKeyState(modifier_key_item_descriptions);
+        if (IsExplorable()) {
+            if (!disable_item_descriptions_in_explorable)
+                return;
+        }
+        else if (IsOutpost()) {
+            if (!disable_item_descriptions_in_outpost)
+                return;
+        }
+        else {
+            return; // Loading
+        }
+        modifier_key_item_descriptions_key_state = GetKeyState(modifier_key_item_descriptions);
+        // Trigger re-render of item tooltip
+        const auto hovered_item = GW::Items::GetHoveredItem();
+        if (!hovered_item)
+            return;
+        uint32_t items_triggered[2]{};
+        const auto inv = GW::Items::GetInventory();
+        if (hovered_item == inv->weapon_set0 || hovered_item == inv->offhand_set0) {
+            items_triggered[0] = inv->weapon_set0 ? inv->weapon_set0->item_id : 0;
+            items_triggered[1] = inv->offhand_set0 ? inv->offhand_set0->item_id : 0;
+        }
+        else if (hovered_item == inv->weapon_set1 || hovered_item == inv->offhand_set1) {
+            items_triggered[0] = inv->weapon_set1 ? inv->weapon_set1->item_id : 0;
+            items_triggered[1] = inv->offhand_set1 ? inv->offhand_set1->item_id : 0;
+        }
+        else if (hovered_item == inv->weapon_set2 || hovered_item == inv->offhand_set2) {
+            items_triggered[0] = inv->weapon_set2 ? inv->weapon_set2->item_id : 0;
+            items_triggered[1] = inv->offhand_set2 ? inv->offhand_set2->item_id : 0;
+        }
+        else if (hovered_item == inv->weapon_set3 || hovered_item == inv->offhand_set3) {
+            items_triggered[0] = inv->weapon_set3 ? inv->weapon_set3->item_id : 0;
+            items_triggered[1] = inv->offhand_set3 ? inv->offhand_set3->item_id : 0;
+        }
+        else {
+            items_triggered[0] = hovered_item->item_id;
+            items_triggered[1] = 0;
+        }
+        GW::GameThread::Enqueue([items = items_triggered]() {
+            if (items[0])
+                GW::UI::SendUIMessage(GW::UI::UIMessage::kItemUpdated, &items[0]);
+            if (items[1])
+                GW::UI::SendUIMessage(GW::UI::UIMessage::kItemUpdated, &items[1]);
+            });
+    }
+    GW::HookEntry OnCreateUIComponent_Entry;
+    void OnCreateUIComponent(GW::UI::CreateUIComponentPacket* msg) {
+        if (hide_email_address && msg->component_label && wcscmp(msg->component_label, L"EditAccount") == 0) {
+            msg->component_flags |= 0x01000000;
+        }
+    }
+
+    typedef bool(__cdecl* OnProcessInput_pt)(uint32_t* wParam, uint32_t* lParam);
+    OnProcessInput_pt ProcessInput_Func = nullptr;
+    OnProcessInput_pt ProcessInput_Ret = nullptr;
+
+    struct GwMouseMove {
+        int center_x;
+        int center_y;
+        uint32_t unk;
+        uint32_t mouse_button_state; // 0x1 - LMB, 0x2 - MMB, 0x4 - RMB
+        uint32_t move_camera; // 1 == control camera while right mouse button pressed
+        int captured_x;
+        int captured_y;
+    };
+    GwMouseMove* gw_mouse_move = 0;
+    LONG rawInputRelativePosX = 0;
+    LONG rawInputRelativePosY = 0;
+    bool* HasRegisteredTrackMouseEvent = 0;
+    typedef void(__cdecl* SetCursorPosCenter_pt)(GwMouseMove* wParam);
+    SetCursorPosCenter_pt SetCursorPosCenter_Func = nullptr;
+    SetCursorPosCenter_pt SetCursorPosCenter_Ret = nullptr;
+
+    // Override (and rewrite) GW's handling of setting the mouse cursor to the center of the screen (bypass GameMutex, may be the cause of camera glitch)
+    // This could be a patch really, but rewriting the function out is a bit more readable.
+    void OnSetCursorPosCenter(GwMouseMove* gwmm) {
+        GW::Hook::EnterHook();
+        // @Enhancement: Maybe assert that gwmm == gw_mouse_move?
+        HWND gw_window_handle = GetFocus();
+        // @Enhancement: Maybe check that the focussed window handle is the GW window handle?
+        RECT rect;
+        if (!(gw_window_handle && GetClientRect(gw_window_handle, &rect)))
+            goto leave;
+        gwmm->center_x = (rect.left + rect.right) / 2;
+        gwmm->center_y = (rect.bottom + rect.top) / 2;
+        rawInputRelativePosX = rawInputRelativePosY = 0;
+        SetPhysicalCursorPos(gwmm->captured_x, gwmm->captured_y);
+    leave:
+        GW::Hook::LeaveHook();
+    }
+
+    // Override (and rewrite) GW's handling of mouse event 0x200 to stop camera glitching.
+    bool OnProcessInput(uint32_t* wParam, uint32_t* lParam) {
+        GW::Hook::EnterHook();
+        if(!(HasRegisteredTrackMouseEvent && gw_mouse_move))
+            goto forward_call; // Failed to find addresses for variables
+        if(!(wParam && wParam[1] == 0x200))
+            goto forward_call; // Not mouse movement
+        if (!(*HasRegisteredTrackMouseEvent && gw_mouse_move->move_camera))
+            goto forward_call; // Not moving the camera, or GW hasn't yet called TrackMouseEvent
+
+        lParam[0] = 0x12;
+        // Set the output parameters to be the relative position of the mouse to the center of the screen
+        // NB: Original function uses ClientToScreen here; we've already grabbed the correct value via CursorFixWndProc
+        lParam[1] = rawInputRelativePosX;
+        lParam[2] = rawInputRelativePosY;
+        
+        // Reset the cursor position to the middle of the viewport
+        OnSetCursorPosCenter(gw_mouse_move);
+        GW::Hook::LeaveHook();
+        return true;
+    forward_call:
+        GW::Hook::LeaveHook();
+        return ProcessInput_Ret(wParam, lParam);
+
+    }
+
+    // Collect the relative mouse position from raw input, instead of using the position passed into GW.
+    void CursorFixWndProc(UINT Message, WPARAM wParam, LPARAM lParam) {
+        if (!(Message == WM_INPUT && GET_RAWINPUT_CODE_WPARAM(wParam) == RIM_INPUT && lParam))
+            return; // Not raw input
+        if (!gw_mouse_move)
+            return; // No gw mouse move ptr; this shouldn't happen
+
+        UINT dwSize = sizeof(RAWINPUT);
+        BYTE lpb[sizeof(RAWINPUT)];
+        ASSERT(GetRawInputData((HRAWINPUT)lParam, RID_INPUT, lpb, &dwSize, sizeof(RAWINPUTHEADER)) == dwSize);
+
+        RAWINPUT *raw = (RAWINPUT *)lpb;
+        if ((raw->data.mouse.usFlags & MOUSE_MOVE_ABSOLUTE) == 0) {
+            // If its a relative mouse move, process the action
+            if (gw_mouse_move->move_camera) {
+                rawInputRelativePosX += raw->data.mouse.lLastX;
+                rawInputRelativePosY += raw->data.mouse.lLastY;
+            }
+            else {
+                rawInputRelativePosX = rawInputRelativePosY = 0;
+            }
+        }
+    }
+    bool CursorFixInitialise() {
+        if (gw_mouse_move)
+            return true;
+        auto hwnd = GW::MemoryMgr::GetGWWindowHandle();
+        if (!hwnd)
+            return false;
+        uintptr_t address = GW::Scanner::FindAssertion("p:\\code\\base\\os\\win32\\osinput.cpp", "osMsg", 0x32);
+        address = GW::Scanner::FunctionFromNearCall(address);
+        if (address) {
+            ProcessInput_Func = (OnProcessInput_pt)address;
+            address += 0x2b3;
+            HasRegisteredTrackMouseEvent = *(bool**)address;
+            address += 0x85;
+            gw_mouse_move = *(GwMouseMove**)address;
+            address += 0x7;
+            SetCursorPosCenter_Func = (SetCursorPosCenter_pt)GW::Scanner::FunctionFromNearCall(address);
+
+            GW::Hook::CreateHook(ProcessInput_Func, OnProcessInput, (void**)&ProcessInput_Ret);
+            GW::Hook::EnableHooks(ProcessInput_Func);
+
+            GW::Hook::CreateHook(SetCursorPosCenter_Func, OnSetCursorPosCenter, (void**)&SetCursorPosCenter_Ret);
+            GW::Hook::EnableHooks(SetCursorPosCenter_Func);
+        }
+
+        GWCA_INFO("[SCAN] ProcessInput_Func = %p", ProcessInput_Func);
+        GWCA_INFO("[SCAN] HasRegisteredTrackMouseEvent = %p", HasRegisteredTrackMouseEvent);
+        GWCA_INFO("[SCAN] gw_mouse_move = %p", gw_mouse_move);
+        GWCA_INFO("[SCAN] SetCursorPosCenter_Func = %p", SetCursorPosCenter_Func);
+
+        ASSERT(ProcessInput_Func && HasRegisteredTrackMouseEvent && gw_mouse_move && SetCursorPosCenter_Func);
+
+        // RegisterRawInputDevices to be able to receive WM_INPUT via WndProc
+        RAWINPUTDEVICE Rid;
+        Rid.usUsagePage = HID_USAGE_PAGE_GENERIC;
+        Rid.usUsage = HID_USAGE_GENERIC_MOUSE;
+        Rid.dwFlags = RIDEV_INPUTSINK;
+        Rid.hwndTarget = hwnd;
+        ASSERT(RegisterRawInputDevices(&Rid, 1, sizeof(Rid)));
+        return true;
+
+    }
+    void CursorFixTerminate() {
+        GW::Hook::DisableHooks(SetCursorPosCenter_Func);
+        GW::Hook::DisableHooks(ProcessInput_Func);
+    }
 }
 
 static std::wstring ShorthandItemDescription(GW::Item* item) {
@@ -286,7 +902,7 @@ static std::wstring ShorthandItemDescription(GW::Item* item) {
     std::wsmatch m;
 
     // For armor items, include full item name and a few description bits.
-    switch ((GW::Constants::ItemType)item->type) {
+    switch (static_cast<GW::Constants::ItemType>(item->type)) {
     case GW::Constants::ItemType::Headpiece:
     case GW::Constants::ItemType::Boots:
     case GW::Constants::ItemType::Chestpiece:
@@ -317,7 +933,7 @@ static std::wstring ShorthandItemDescription(GW::Item* item) {
     // Replace "Requires 9 Divine Favor" > "q9 Divine Favor"
     std::wregex regexp_req(L".\x10A\x0AA8\x10A\xAA9\x10A.\x1\x101.\x1\x1");
     while (std::regex_search(original, m, regexp_req)) {
-        for (auto match : m) {
+        for (auto& match : m) {
             std::wstring found = match.str();
             wchar_t buffer[128];
             wsprintfW(buffer, L"\x108\x107, q%d \x1\x2%c", found.at(9) - 0x100, found.at(6));
@@ -327,7 +943,7 @@ static std::wstring ShorthandItemDescription(GW::Item* item) {
     // Replace "Requires 9 Scythe Mastery" > "q9 Scythe Mastery"
     std::wregex regexp_req2(L".\x10A\xAA8\x10A\xAA9\x10A\x8101.\x1\x101.\x1\x1");
     while (std::regex_search(original, m, regexp_req2)) {
-        for (auto match : m) {
+        for (auto& match : m) {
             std::wstring found = match.str();
             wchar_t buffer[128];
             wsprintfW(buffer, L"\x108\x107, q%d \x1\x2\x8101%c", found.at(10) - 0x100, found.at(7));
@@ -339,7 +955,7 @@ static std::wstring ShorthandItemDescription(GW::Item* item) {
     // "vs. Demons" > "Demons"
     std::wregex vs_damage(L"[\xAAC\xAAF]\x10A.\x1");
     while (std::regex_search(original, m, vs_damage)) {
-        for (auto match : m) {
+        for (auto& match : m) {
             std::wstring found = match.str();
             wchar_t buffer[4];
             wsprintfW(buffer, L"%c", found.at(2));
@@ -350,7 +966,7 @@ static std::wstring ShorthandItemDescription(GW::Item* item) {
     // Replace "Lengthens ??? duration on foes by 33%" > "??? duration +33%"
     std::wregex regexp_lengthens_duration(L"\xAA4\x10A.\x1");
     while (std::regex_search(original, m, regexp_lengthens_duration)) {
-        for (auto match : m) {
+        for (auto& match : m) {
             std::wstring found = match.str();
             wchar_t buffer[64];
             wsprintfW(buffer, L"%c\x2\x108\x107 +33%%\x1", found.at(2));
@@ -361,7 +977,7 @@ static std::wstring ShorthandItemDescription(GW::Item* item) {
     // Replace "Reduces ??? duration on you by 20%" > "??? duration -20%"
     std::wregex regexp_reduces_duration(L"\xAA7\x10A.\x1");
     while (std::regex_search(original, m, regexp_reduces_duration)) {
-        for (auto match : m) {
+        for (auto& match : m) {
             std::wstring found = match.str();
             wchar_t buffer[64];
             wsprintfW(buffer, L"%c\x2\x108\x107 -20%%\x1", found.at(2));
@@ -374,7 +990,7 @@ static std::wstring ShorthandItemDescription(GW::Item* item) {
     // Change " (while Health is above n)" to "^n";
     std::wregex n_over_n(L"\xAA8\x10A\xABC\x10A\xA52\x1\x101.\x1");
     while (std::regex_search(original, m, n_over_n)) {
-        for (auto match : m) {
+        for (auto& match : m) {
             std::wstring found = match.str();
             wchar_t buffer[64];
             wsprintfW(buffer, L"\x108\x107^%d\x1", found.at(7) - 0x100);
@@ -385,7 +1001,7 @@ static std::wstring ShorthandItemDescription(GW::Item* item) {
     // Change "Enchantments last 20% longer" to "Ench +20%"
     std::wregex enchantments(L"\xAA2\x101.");
     while (std::regex_search(original, m, enchantments)) {
-        for (auto match : m) {
+        for (auto& match : m) {
             std::wstring found = match.str();
             wchar_t buffer[64];
             wsprintfW(buffer, L"\x108\x107" L"Enchantments +%d%%\x1", found.at(2) - 0x100);
@@ -396,7 +1012,7 @@ static std::wstring ShorthandItemDescription(GW::Item* item) {
     // "(Chance: 18%)" > "(18%)"
     std::wregex chance_regex(L"\xA87\x10A\xA48\x1\x101.");
     while (std::regex_search(original, m, chance_regex)) {
-        for (auto match : m) {
+        for (auto& match : m) {
             std::wstring found = match.str();
             wchar_t buffer[64];
             wsprintfW(buffer, L"\x108\x107%d%%\x1", found.at(5) - 0x100);
@@ -406,7 +1022,7 @@ static std::wstring ShorthandItemDescription(GW::Item* item) {
     // Change "Halves skill recharge of <attribute> spells" > "HSR <attribute>"
     std::wregex hsr_attribute(L"\xA81\x10A\xA58\x1\x10B.\x1");
     while (std::regex_search(original, m, hsr_attribute)) {
-        for (auto match : m) {
+        for (auto& match : m) {
             std::wstring found = match.str();
             wchar_t buffer[64];
             wsprintfW(buffer, L"\x108\x107" L"HSR \x1\x2%c", found.at(5));
@@ -416,7 +1032,7 @@ static std::wstring ShorthandItemDescription(GW::Item* item) {
     // Change "Inscription: "Blah Blah"" to just "Blah Blah"
     std::wregex inscription(L"\x8101\x5DC5\x10A..\x1");
     while (std::regex_search(original, m, inscription)) {
-        for (auto match : m) {
+        for (auto& match : m) {
             std::wstring found = match.str();
             wchar_t buffer[64];
             wsprintfW(buffer, L"%c%c", found.at(3), found.at(4));
@@ -427,7 +1043,7 @@ static std::wstring ShorthandItemDescription(GW::Item* item) {
     // Change "Halves casting time of <attribute> spells" > "HCT <attribute>"
     std::wregex hct_attribute(L"\xA81\x10A\xA47\x1\x10B.\x1");
     while (std::regex_search(original, m, hct_attribute)) {
-        for (auto match : m) {
+        for (auto& match : m) {
             std::wstring found = match.str();
             wchar_t buffer[64];
             wsprintfW(buffer, L"\x108\x107" L"HCT \x1\x2%c", found.at(5));
@@ -438,7 +1054,7 @@ static std::wstring ShorthandItemDescription(GW::Item* item) {
     // Change "Piercing Dmg: 11-22" > "Piercing: 11-22"
     std::wregex weapon_dmg(L"\xA89\x10A\xA4E\x1\x10B.\x1\x101.\x102.");
     while (std::regex_search(original, m, weapon_dmg)) {
-        for (auto match : m) {
+        for (auto& match : m) {
             std::wstring found = match.str();
             wchar_t buffer[64];
             wsprintfW(buffer, L"%c\x2\x108\x107: %d-%d\x1", found.at(5),found.at(8) - 0x100, found.at(10) - 0x100);
@@ -479,7 +1095,7 @@ static std::wstring ShorthandItemDescription(GW::Item* item) {
     // Replace (while affected by a(n) to just (n)
     std::wregex while_affected_by(L"\x8101\x4D9C\x10A.\x1");
     while (std::regex_search(original, m, while_affected_by)) {
-        for (auto match : m) {
+        for (auto& match : m) {
             std::wstring found = match.str();
             wchar_t buffer[2] = { 0 };
             buffer[0] = found.at(3);
@@ -497,11 +1113,11 @@ static std::wstring ShorthandItemDescription(GW::Item* item) {
     // Combine Attribute + 3, Attribute + 1 to Attribute +3 +1 (e.g. headpiece)
     std::wregex attribute_stacks(L".\x10A\xA84\x10A.\x1\x101.\x1\x2\x102\x2.\x10A\xA84\x10A.\x1\x101.\x1");
     if (std::regex_search(original, m, attribute_stacks)) {
-        for (auto match : m) {
+        for (auto& match : m) {
             std::wstring found = match.str();
             if (found[4] != found[16]) continue; // Different attributes.
             wchar_t buffer[64];
-            wsprintfW(buffer, L"%c\x10A\xA84\x10A%c\x1\x101%c\x2\xA84\x101%c\x1", 
+            wsprintfW(buffer, L"%c\x10A\xA84\x10A%c\x1\x101%c\x2\xA84\x101%c\x1",
                 found[0], found[4],found[7], found[19]);
             original = std::regex_replace(original, std::wregex(found), buffer);
         }
@@ -510,11 +1126,11 @@ static std::wstring ShorthandItemDescription(GW::Item* item) {
 }
 static std::wstring ParseItemDescription(GW::Item* item) {
     std::wstring original = ShorthandItemDescription(item);
-    
+
     // Remove "Value: 122 gold"
     original = std::regex_replace(original, std::wregex(L"\x2\x102\x2\xA3E\x10A\xA8A\x10A\xA59\x1\x10B.\x101.(\x102.)?\x1\x1"), L"");
 
-    // Remove other "greyed" generic terms e.g. "Two-Handed", "Unidentified"    
+    // Remove other "greyed" generic terms e.g. "Two-Handed", "Unidentified"
     original = std::regex_replace(original, std::wregex(L"\x2\x102\x2\xA3E\x10A.\x1"), L"");
 
     // Remove "Necromancer Munne sometimes gives these to me in trade" etc
@@ -572,6 +1188,33 @@ void GameSettings::PingItem(uint32_t item_id, uint32_t parts) {
     return PingItem(GW::Items::GetItemById(item_id), parts);
 }
 
+PendingChatMessage::PendingChatMessage(GW::Chat::Channel channel, const wchar_t* enc_message, const wchar_t* enc_sender) : channel(channel) {
+    invalid = !enc_message || !enc_sender;
+    if (!invalid) {
+        wcscpy(encoded_sender, enc_sender);
+        wcscpy(encoded_message, enc_message);
+        Init();
+    }
+}
+PendingChatMessage* PendingChatMessage::queueSend(GW::Chat::Channel channel, const wchar_t* enc_message, const wchar_t* enc_sender) {
+    PendingChatMessage* m = new PendingChatMessage(channel, enc_message, enc_sender);
+    if (m->invalid) {
+        delete m;
+        return nullptr;
+    }
+    m->SendIt();
+    return m;
+}
+
+PendingChatMessage* PendingChatMessage::queuePrint(GW::Chat::Channel channel, const wchar_t* enc_message, const wchar_t* enc_sender) {
+    PendingChatMessage* m = new PendingChatMessage(channel, enc_message, enc_sender);
+    if (m->invalid) {
+        delete m;
+        return nullptr;
+    }
+    return m;
+}
+
 bool PendingChatMessage::Cooldown() {
     return last_send && clock() < last_send + (clock_t)(CLOCKS_PER_SEC / 2);
 }
@@ -606,6 +1249,37 @@ const bool PendingChatMessage::Send() {
     printed = true;
     return printed;
 }
+void PendingChatMessage::Init() {
+    if (!invalid) {
+        if (IsStringEncoded(this->encoded_message)) {
+            //Log::LogW(L"message IS encoded, ");
+            GW::UI::AsyncDecodeStr(encoded_message, &output_message);
+        }
+        else {
+            output_message = std::wstring(encoded_message);
+            //Log::LogW(L"message NOT encoded, ");
+        }
+        if (IsStringEncoded(this->encoded_sender)) {
+            //Log::LogW(L"sender IS encoded\n");
+            GW::UI::AsyncDecodeStr(encoded_sender, &output_sender);
+        }
+        else {
+            //Log::LogW(L"sender NOT encoded\n");
+            output_sender = std::wstring(encoded_sender);
+        }
+    }
+}
+std::vector<std::wstring> PendingChatMessage::SanitiseForSend() {
+    std::wregex no_tags(L"<[^>]+>"), no_new_lines(L"\n");
+    std::wstring sanitised, sanitised2, temp;
+    std::regex_replace(std::back_inserter(sanitised), output_message.begin(), output_message.end(), no_tags, L"");
+    std::regex_replace(std::back_inserter(sanitised2), sanitised.begin(), sanitised.end(), no_new_lines, L"|");
+    std::vector<std::wstring> parts;
+    std::wstringstream wss(sanitised2);
+    while (std::getline(wss, temp, L'|'))
+        parts.push_back(temp);
+    return parts;
+}
 const bool PendingChatMessage::PrintMessage() {
     if (!IsDecoded() || this->invalid) return false; // Not ready or invalid.
     if (this->printed) return true; // Already printed.
@@ -628,57 +1302,77 @@ const bool PendingChatMessage::PrintMessage() {
     return printed;
 };
 
+/*
+*   GWToolbox chat log end
+*/
+
 void GameSettings::Initialize() {
     ToolboxModule::Initialize();
-    
-    {
-        // Patch that allow storage page (and Anniversary page) to work.
-        uintptr_t found = GW::Scanner::Find("\xEB\x17\x33\xD2\x8D\x4A\x06\xEB", "xxxxxxxx", -4);
-        printf("[SCAN] StoragePatch = %p\n", (void *)found);
+    uintptr_t address;
 
-        // Xunlai Chest has a behavior where if you
-        // 1. Open chest on page 1 to 14
-        // 2. Close chest & open it again
-        // -> You should still be on the same page
-        // But, if you try with the material page (or anniversary page in the case when you bought all other storage page)
-        // you will get back the the page 1. I think it was a intended use for material page & forgot to fix it
-        // when they added anniversary page so we do it ourself.
-        DWORD page_max = 14;
-        ctrl_click_patch.SetPatch(found, &page_max, 1);
-        ctrl_click_patch.TogglePatch(true);
+    // Patch that allow storage page (and Anniversary page) to work.
+    address = GW::Scanner::Find("\xEB\x17\x33\xD2\x8D\x4A\x06\xEB", "xxxxxxxx", -4);
+    printf("[SCAN] StoragePatch = %p\n", (void *)address);
+
+    // Xunlai Chest has a behavior where if you
+    // 1. Open chest on page 1 to 14
+    // 2. Close chest & open it again
+    // -> You should still be on the same page
+    // But, if you try with the material page (or anniversary page in the case when you bought all other storage page)
+    // you will get back the the page 1. I think it was a intended use for material page & forgot to fix it
+    // when they added anniversary page so we do it ourself.
+    DWORD page_max = 14;
+    ctrl_click_patch.SetPatch(address, (const char*)&page_max, 1);
+    ctrl_click_patch.TogglePatch(true);
+
+    address = GW::Scanner::Find("\x5F\x6A\x00\xFF\x75\xE4\x6A\x4C\xFF\x75\xF8", "xxxxxxxxxxx", -0x44);
+    printf("[SCAN] TomePatch = %p\n", (void *)address);
+    if (address) {
+        tome_patch.SetPatch(address, "\x75\x1E\x90\x90\x90\x90\x90", 7);
     }
-
-    {
-        uintptr_t found = GW::Scanner::Find("\x5F\x6A\x00\xFF\x75\xE4\x6A\x4C\xFF\x75\xF8", "xxxxxxxxxxx", -0x44);
-        printf("[SCAN] TomePatch = %p\n", (void *)found);
-        if (found) {
-            tome_patch.SetPatch(found, "\x75\x1E\x90\x90\x90\x90\x90", 7);
-        }
+    address = GW::Scanner::Find("\xF7\x40\x0C\x10\x00\x02\x00\x75", "xxxxxx??", +7);
+    printf("[SCAN] GoldConfirmationPatch = %p\n", (void *)address);
+    if (address) {
+        gold_confirm_patch.SetPatch(address, "\x90\x90", 2);
     }
-
-    {
-        uintptr_t found = GW::Scanner::Find("\xF7\x40\x0C\x10\x00\x02\x00\x75", "xxxxxx??", +7);
-        printf("[SCAN] GoldConfirmationPatch = %p\n", (void *)found);
-        if (found) {
-            gold_confirm_patch.SetPatch(found, "\x90\x90", 2);
-        }
+    // This could be done with patches if we wanted to still show description for weapon sets and merchants etc, but its more signatures to log.
+    GetItemDescription_Func = (GetItemDescription_pt)GW::Scanner::Find("\x8b\xc3\x25\xfd\x00\x00\x00\x3c\xfd", "xxxxxxxxx", -0x5f);
+    if (GetItemDescription_Func) {
+        GW::HookBase::CreateHook(GetItemDescription_Func, OnGetItemDescription, (void**)&GetItemDescription_Ret);
+        GW::HookBase::EnableHooks(GetItemDescription_Func);
     }
+    // See OnAgentAllegianceChanged
+    address = GW::Scanner::Find("\x75\x18\x81\xce\x00\x00\x00\x02\x56", "xxxxxxxxx", 0x9);
+    SetGlobalNameTagVisibility_Func = (SetGlobalNameTagVisibility_pt)GW::Scanner::FunctionFromNearCall(address);
+    if (SetGlobalNameTagVisibility_Func) {
+        GlobalNameTagVisibilityFlags = *(uint32_t**)(((uintptr_t)SetGlobalNameTagVisibility_Func) + 0xb);
+        GW::StoC::RegisterPostPacketCallback<GW::Packet::StoC::AgentUpdateAllegiance>(&PartyDefeated_Entry, &OnAgentAllegianceChanged);
+    }
+    printf("[SCAN] SetGlobalNameTagVisibility_Func = %p", (void*)SetGlobalNameTagVisibility_Func);
+    printf("[SCAN] GlobalNameTagVisibilityFlags = %p", (void*)GlobalNameTagVisibilityFlags);
 
-    
-    // Save last dialog sender, used for faction donate
-    GW::StoC::RegisterPacketCallback<GW::Packet::StoC::DialogSender>(
-        &OnDialog_Entry,
-        [this](GW::HookStatus* status, GW::Packet::StoC::DialogSender* pak) {
-            UNREFERENCED_PARAMETER(status);
-            auto *agent = static_cast<GW::AgentLiving*>(GW::Agents::GetAgentByID(pak->agent_id));
-            if (!agent) return;
-            last_dialog_npc_id = agent->player_number;
-        });
-    GW::Agents::RegisterDialogCallback(&OnDialog_Entry, &OnFactionDonate);
+    address = GW::Scanner::Find("\x8b\x7d\x08\x8b\x70\x2c\x83\xff\x0f","xxxxxxxxx");
+    ShowAgentFactionGain_Func = (ShowAgentFactionGain_pt)GW::Scanner::FunctionFromNearCall(address + 0x6c);
+    ShowAgentExperienceGain_Func = (ShowAgentExperienceGain_pt)GW::Scanner::FunctionFromNearCall(address + 0x4f);
+    printf("[SCAN] ShowAgentFactionGain_Func = %p\n", (void*)ShowAgentFactionGain_Func);
+    printf("[SCAN] ShowAgentExperienceGain_Func = %p\n", (void*)ShowAgentExperienceGain_Func);
 
-    GW::StoC::RegisterPacketCallback<GW::Packet::StoC::PartyDefeated>(&PartyDefeated_Entry, &OnPartyDefeated);
+    GW::HookBase::CreateHook(ShowAgentFactionGain_Func, OnShowAgentFactionGain, (void**)&ShowAgentFactionGain_Ret);
+    GW::HookBase::EnableHooks(ShowAgentFactionGain_Func);
+    GW::HookBase::CreateHook(ShowAgentExperienceGain_Func, OnShowAgentExperienceGain, (void**)&ShowAgentExperienceGain_Ret);
+    GW::HookBase::EnableHooks(ShowAgentExperienceGain_Func);
+
+    GW::UI::RegisterUIMessageCallback(&OnDialog_Entry, GW::UI::UIMessage::kSendDialog, &OnFactionDonate);
+    GW::UI::RegisterUIMessageCallback(&OnDialog_Entry, GW::UI::UIMessage::kSendLoadSkillbar, &OnPreLoadSkillBar);
+    GW::StoC::RegisterPacketCallback(&OnDialog_Entry, GAME_SMSG_SKILLBAR_UPDATE, OnPostLoadSkillBar, 0x8000);
+    GW::StoC::RegisterPacketCallback(&OnDialog_Entry, GAME_SMSG_SKILL_UPDATE_SKILL_COUNT_1, OnUpdateSkillCount, -0x3000);
+    GW::StoC::RegisterPacketCallback(&OnDialog_Entry, GAME_SMSG_SKILL_UPDATE_SKILL_COUNT_2, OnUpdateSkillCount, -0x3000);
+
+    GW::StoC::RegisterPostPacketCallback<GW::Packet::StoC::PartyDefeated>(&PartyDefeated_Entry, &OnPartyDefeated);
     GW::StoC::RegisterPacketCallback<GW::Packet::StoC::GenericValue>(&PartyDefeated_Entry, [](GW::HookStatus* status, GW::Packet::StoC::GenericValue* packet) {
-        switch (packet->Value_id) {
+        switch (packet->value_id) {
+        case 11:
+            OnAgentMarker(status, packet);
         case 21:
             OnAgentEffect(status, packet);
             break;
@@ -697,7 +1391,7 @@ void GameSettings::Initialize() {
             status->blocked = true;
         });*/
     GW::StoC::RegisterPacketCallback<GW::Packet::StoC::TradeStart>(&TradeStart_Entry, &OnTradeStarted);
-    GW::StoC::RegisterPacketCallback<GW::Packet::StoC::PartyInviteReceived_Create>(&PartyPlayerAdd_Entry, &OnPartyInviteReceived);
+    GW::StoC::RegisterPostPacketCallback<GW::Packet::StoC::PartyInviteReceived_Create>(&PartyPlayerAdd_Entry, &OnPartyInviteReceived);
     GW::StoC::RegisterPacketCallback<GW::Packet::StoC::PartyPlayerAdd>(&PartyPlayerAdd_Entry, &OnPartyPlayerJoined);
     GW::StoC::RegisterPacketCallback<GW::Packet::StoC::GameSrvTransfer>(&GameSrvTransfer_Entry, &OnMapTravel);
     GW::StoC::RegisterPacketCallback<GW::Packet::StoC::CinematicPlay>(&CinematicPlay_Entry, &OnCinematic);
@@ -706,6 +1400,7 @@ void GameSettings::Initialize() {
     GW::StoC::RegisterPacketCallback<GW::Packet::StoC::VanquishComplete>(&VanquishComplete_Entry, &OnVanquishComplete);
     GW::StoC::RegisterPacketCallback<GW::Packet::StoC::DungeonReward>(&VanquishComplete_Entry, &OnDungeonReward);
     GW::StoC::RegisterPacketCallback<GW::Packet::StoC::MessageServer>(&MessageServer_Entry, &OnServerMessage);
+    GW::StoC::RegisterPacketCallback<GW::Packet::StoC::MessageGlobal>(&MessageGlobal_Entry, &OnGlobalMessage);
     GW::StoC::RegisterPacketCallback<GW::Packet::StoC::MessageNPC>(&MessageNPC_Entry,&OnNPCChatMessage);
     GW::StoC::RegisterPacketCallback<GW::Packet::StoC::MessageLocal>(&MessageLocal_Entry, &OnLocalChatMessage);
     GW::StoC::RegisterPacketCallback<GW::Packet::StoC::MapLoaded>(&PlayerJoinInstance_Entry, &OnMapLoaded);
@@ -723,12 +1418,14 @@ void GameSettings::Initialize() {
         });
     GW::StoC::RegisterPacketCallback<GW::Packet::StoC::ScreenShake>(&OnScreenShake_Entry, &OnScreenShake);
 
-    GW::UI::RegisterUIMessageCallback(&OnCheckboxPreferenceChanged_Entry, &OnCheckboxPreferenceChanged);
-    GW::UI::RegisterUIMessageCallback(&OnChangeTarget_Entry, OnChangeTarget);
-    GW::UI::RegisterUIMessageCallback(&OnPlayerChatMessage_Entry, OnPlayerChatMessage);
-    GW::UI::RegisterUIMessageCallback(&OnWriteChat_Entry, OnWriteChat);
-    GW::UI::RegisterUIMessageCallback(&OnAgentStartCast_Entry, OnAgentStartCast);
-    
+    GW::UI::RegisterUIMessageCallback(&OnCheckboxPreferenceChanged_Entry, GW::UI::UIMessage::kCheckboxPreference, &OnCheckboxPreferenceChanged);
+    GW::UI::RegisterUIMessageCallback(&OnChangeTarget_Entry, GW::UI::UIMessage::kChangeTarget, OnChangeTarget);
+    GW::UI::RegisterUIMessageCallback(&OnPlayerChatMessage_Entry, GW::UI::UIMessage::kPlayerChatMessage, OnPlayerChatMessage);
+    GW::UI::RegisterUIMessageCallback(&OnWriteChat_Entry, GW::UI::UIMessage::kWriteToChatLog, OnWriteChat);
+    GW::UI::RegisterUIMessageCallback(&OnAgentStartCast_Entry, GW::UI::UIMessage::kAgentStartCasting, OnAgentStartCast);
+    GW::UI::RegisterUIMessageCallback(&OnOpenWikiUrl_Entry, GW::UI::UIMessage::kOpenWikiUrl, OnOpenWiki);
+    GW::UI::RegisterUIMessageCallback(&OnAgentNameTag_Entry, GW::UI::UIMessage::kShowAgentNameTag, OnAgentNameTag);
+    GW::UI::RegisterUIMessageCallback(&OnAgentNameTag_Entry, GW::UI::UIMessage::kSetAgentNameTagAttribs, OnAgentNameTag);
 
     GW::UI::RegisterKeydownCallback(&OnChangeTarget_Entry, [this](GW::HookStatus*, uint32_t key) {
         if (key != static_cast<uint32_t>(GW::UI::ControlAction_TargetNearestItem))
@@ -745,30 +1442,49 @@ void GameSettings::Initialize() {
         });
     GW::Chat::RegisterStartWhisperCallback(&StartWhisperCallback_Entry, &OnStartWhisper);
     GW::FriendListMgr::RegisterFriendStatusCallback(&FriendStatusCallback_Entry,&FriendStatusCallback);
-    GW::CtoS::RegisterPacketCallback(&WhisperCallback_Entry, GAME_CMSG_PING_WEAPON_SET, &OnPingWeaponSet);
+    GW::UI::RegisterUIMessageCallback(&OnPreSendDialog_Entry, GW::UI::UIMessage::kSendPingWeaponSet, OnPingWeaponSet);
     GW::SkillbarMgr::RegisterUseSkillCallback(&OnCast_Entry, &OnCast);
-    GW::Chat::RegisterSendChatCallback(&SendChatCallback_Entry, &SendChatCallback);
+    GW::Chat::RegisterSendChatCallback(&SendChatCallback_Entry, &OnSendChat);
     GW::Chat::RegisterWhisperCallback(&WhisperCallback_Entry, &WhisperCallback);
-    GW::Chat::RegisterChatEventCallback(&OnPartyTargetChange_Entry, OnPartyTargetChange);
 
+    const GW::UI::UIMessage dialog_ui_messages[] = {
+        GW::UI::UIMessage::kSendDialog,
+        GW::UI::UIMessage::kDialogBody,
+        GW::UI::UIMessage::kDialogButton
+    };
+    for (const auto message_id : dialog_ui_messages) {
+        GW::UI::RegisterUIMessageCallback(&OnPostSendDialog_Entry, message_id, OnDialogUIMessage,0x8000);
+    }
 
+    const GW::UI::UIMessage party_target_ui_messages[] = {
+        GW::UI::UIMessage::kTargetPlayerPartyMember,
+        GW::UI::UIMessage::kTargetNPCPartyMember
+    };
+    for (const auto message_id : party_target_ui_messages) {
+        GW::UI::RegisterUIMessageCallback(&OnPostSendDialog_Entry, message_id, OnPartyTargetChanged, 0x8000);
+    }
 
     GW::Chat::CreateCommand(L"reinvite", GameSettings::CmdReinvite);
+
+    GW::UI::RegisterCreateUIComponentCallback(&OnCreateUIComponent_Entry, OnCreateUIComponent);
+
+    set_window_title_delay = TIMER_INIT();
 #ifdef APRIL_FOOLS
     AF::ApplyPatchesIfItsTime();
 #endif
 
 }
-// Same as GW::PartyMgr::GetPlayerIsLeader() but has an extra check to ignore disconnected people.
-bool GameSettings::GetPlayerIsLeader() {
-    GW::PartyInfo* party = GW::PartyMgr::GetPartyInfo();
-    if (!(party && party->players.size())) return false;
-    for (auto &player : party->players) {
-        if (!player.connected())
-            continue;
-        return player.login_number == GW::PlayerMgr::GetPlayerNumber();
+void GameSettings::OnDialogUIMessage(GW::HookStatus*, GW::UI::UIMessage message_id, void* wparam, void* ) {
+    switch (message_id) {
+        case GW::UI::UIMessage::kDialogButton: {
+            GW::UI::DialogButtonInfo* info = (GW::UI::DialogButtonInfo*)wparam;
+            // 8101 7f88 010a 8101 730e 0001
+            if (Instance().auto_open_locked_chest && wcscmp(info->message, L"\x8101\x7f88\x010a\x8101\x730e\x1") == 0) {
+                // Auto use lockpick
+                GW::Agents::SendDialog(info->dialog_id);
+            }
+        } break;
     }
-    return false;
 }
 
 // Helper function; avoids doing string checks on offline friends.
@@ -781,9 +1497,9 @@ GW::Friend* GameSettings::GetOnlineFriend(wchar_t* account, wchar_t* playing) {
     for (GW::Friend* it : friends) {
         if (n_found == n_friends) break;
         if (!it) continue;
-        if (it->type != GW::FriendType::FriendType_Friend) continue;
+        if (it->type != GW::FriendType::Friend) continue;
         n_found++;
-        if (it->status != GW::FriendStatus::FriendStatus_Online) continue;
+        if (it->status != GW::FriendStatus::Online) continue;
         if (account && !wcsncmp(it->alias, account, 20))
             return it;
         if (playing && !wcsncmp(it->charname, playing, 20))
@@ -800,7 +1516,7 @@ void GameSettings::MessageOnPartyChange() {
         return; // Party not ready yet.
     bool is_leading = false;
     std::vector<std::wstring> current_party_names;
-    GW::PlayerPartyMemberArray current_party_players = current_party->players; // Copy the player array here to avoid ptr issues.
+    GW::PlayerPartyMemberArray& current_party_players = current_party->players; // Copy the player array here to avoid ptr issues.
     for (size_t i = 0; i < current_party_players.size(); i++) {
         if (!current_party_players[i].login_number)
             continue;
@@ -844,7 +1560,7 @@ void GameSettings::MessageOnPartyChange() {
                 GW::Chat::WriteChat(GW::Chat::Channel::CHANNEL_GLOBAL, buffer);
             }
         }
-    } 
+    }
     was_leading = is_leading;
     previous_party_names = current_party_names;
     check_message_on_party_change = false;
@@ -866,11 +1582,16 @@ void GameSettings::LoadSettings(CSimpleIni* ini) {
     auto_url = ini->GetBoolValue(Name(), VAR_NAME(auto_url), true);
     move_item_on_ctrl_click = ini->GetBoolValue(Name(), VAR_NAME(move_item_on_ctrl_click), move_item_on_ctrl_click);
     move_item_to_current_storage_pane = ini->GetBoolValue(Name(), VAR_NAME(move_item_to_current_storage_pane), move_item_to_current_storage_pane);
+    move_materials_to_current_storage_pane = ini->GetBoolValue(Name(), VAR_NAME(move_materials_to_current_storage_pane), move_materials_to_current_storage_pane);
 
     flash_window_on_pm = ini->GetBoolValue(Name(), VAR_NAME(flash_window_on_pm), flash_window_on_pm);
-    flash_window_on_party_invite = ini->GetBoolValue(Name(), VAR_NAME(flash_window_on_party_invite), flash_window_on_party_invite);
+    flash_window_on_guild_chat =
+        ini->GetBoolValue(Name(), VAR_NAME(flash_window_on_guild_chat), flash_window_on_guild_chat);
+    flash_window_on_party_invite =
+        ini->GetBoolValue(Name(), VAR_NAME(flash_window_on_party_invite), flash_window_on_party_invite);
     flash_window_on_zoning = ini->GetBoolValue(Name(), VAR_NAME(flash_window_on_zoning), flash_window_on_zoning);
     flash_window_on_cinematic = ini->GetBoolValue(Name(), VAR_NAME(flash_window_on_cinematic), flash_window_on_cinematic);
+    focus_window_on_launch = ini->GetBoolValue(Name(), VAR_NAME(focus_window_on_launch), focus_window_on_launch);
     focus_window_on_zoning = ini->GetBoolValue(Name(), VAR_NAME(focus_window_on_zoning), focus_window_on_zoning);
     flash_window_on_trade = ini->GetBoolValue(Name(), VAR_NAME(flash_window_on_trade), flash_window_on_trade);
     focus_window_on_trade = ini->GetBoolValue(Name(), VAR_NAME(focus_window_on_trade), focus_window_on_trade);
@@ -923,6 +1644,15 @@ void GameSettings::LoadSettings(CSimpleIni* ini) {
     block_bottle_rockets = ini->GetBoolValue(Name(), VAR_NAME(block_bottle_rockets), block_bottle_rockets);
     block_ghostinthebox_effect = ini->GetBoolValue(Name(), VAR_NAME(block_ghostinthebox_effect), block_ghostinthebox_effect);
     block_sparkly_drops_effect = ini->GetBoolValue(Name(), VAR_NAME(block_sparkly_drops_effect), block_sparkly_drops_effect);
+    limit_signets_of_capture = ini->GetBoolValue(Name(), VAR_NAME(limit_signets_of_capture), limit_signets_of_capture);
+    auto_open_locked_chest = ini->GetBoolValue(Name(), VAR_NAME(auto_open_locked_chest), auto_open_locked_chest);
+    block_faction_gain = ini->GetBoolValue(Name(), VAR_NAME(block_faction_gain), block_faction_gain);
+    block_experience_gain = ini->GetBoolValue(Name(), VAR_NAME(block_experience_gain), block_experience_gain);
+    block_zero_experience_gain = ini->GetBoolValue(Name(), VAR_NAME(block_zero_experience_gain), block_zero_experience_gain);
+
+    disable_item_descriptions_in_outpost = ini->GetBoolValue(Name(), VAR_NAME(disable_item_descriptions_in_outpost), disable_item_descriptions_in_outpost);
+    disable_item_descriptions_in_explorable = ini->GetBoolValue(Name(), VAR_NAME(disable_item_descriptions_in_explorable), disable_item_descriptions_in_explorable);
+    hide_email_address = ini->GetBoolValue(Name(), VAR_NAME(hide_email_address), hide_email_address);
 
     ::LoadChannelColor(ini, Name(), "local", GW::Chat::Channel::CHANNEL_ALL);
     ::LoadChannelColor(ini, Name(), "guild", GW::Chat::Channel::CHANNEL_GUILD);
@@ -933,15 +1663,26 @@ void GameSettings::LoadSettings(CSimpleIni* ini) {
     ::LoadChannelColor(ini, Name(), "emotes", GW::Chat::Channel::CHANNEL_EMOTE);
     ::LoadChannelColor(ini, Name(), "other", GW::Chat::Channel::CHANNEL_GLOBAL);
 
+    nametag_color_enemy = Colors::Load(ini, Name(), VAR_NAME(nametag_color_enemy), nametag_color_enemy);
+    nametag_color_gadget = Colors::Load(ini, Name(), VAR_NAME(nametag_color_gadget), nametag_color_gadget);
+    nametag_color_item = Colors::Load(ini, Name(), VAR_NAME(nametag_color_item), nametag_color_item);
+    nametag_color_npc = Colors::Load(ini, Name(), VAR_NAME(nametag_color_npc), nametag_color_npc);
+    nametag_color_player_in_party = Colors::Load(ini, Name(), VAR_NAME(nametag_color_player_in_party), nametag_color_player_in_party);
+    nametag_color_player_other = Colors::Load(ini, Name(), VAR_NAME(nametag_color_player_other), nametag_color_player_other);
+    nametag_color_player_self = Colors::Load(ini, Name(), VAR_NAME(nametag_color_player_self), nametag_color_player_self);
+
     GW::PartyMgr::SetTickToggle(tick_is_toggle);
     GW::UI::SetOpenLinks(openlinks);
     GW::Chat::ToggleTimestamps(show_timestamps);
     GW::Chat::SetTimestampsColor(timestamps_color);
     GW::Chat::SetTimestampsFormat(show_timestamp_24h, show_timestamp_seconds);
-    SetWindowTitle(set_window_title_as_charname);
 
     tome_patch.TogglePatch(show_unlearned_skill);
     gold_confirm_patch.TogglePatch(disable_gold_selling_confirmation);
+
+    if (focus_window_on_launch) {
+        FocusWindow();
+    }
 }
 
 void GameSettings::RegisterSettingsContent() {
@@ -973,6 +1714,7 @@ void GameSettings::Terminate() {
     ctrl_click_patch.Reset();
     tome_patch.Reset();
     gold_confirm_patch.Reset();
+    CursorFixTerminate();
 }
 
 void GameSettings::SaveSettings(CSimpleIni* ini) {
@@ -992,14 +1734,17 @@ void GameSettings::SaveSettings(CSimpleIni* ini) {
     ini->SetBoolValue(Name(), VAR_NAME(auto_url), auto_url);
     ini->SetBoolValue(Name(), VAR_NAME(auto_return_on_defeat), auto_return_on_defeat);
     ini->SetBoolValue(Name(), VAR_NAME(shorthand_item_ping), shorthand_item_ping);
-    
+
     ini->SetBoolValue(Name(), VAR_NAME(move_item_on_ctrl_click), move_item_on_ctrl_click);
     ini->SetBoolValue(Name(), VAR_NAME(move_item_to_current_storage_pane), move_item_to_current_storage_pane);
+    ini->SetBoolValue(Name(), VAR_NAME(move_materials_to_current_storage_pane), move_materials_to_current_storage_pane);
     ini->SetBoolValue(Name(), VAR_NAME(stop_screen_shake), stop_screen_shake);
 
     ini->SetBoolValue(Name(), VAR_NAME(flash_window_on_pm), flash_window_on_pm);
+    ini->SetBoolValue(Name(), VAR_NAME(flash_window_on_guild_chat), flash_window_on_guild_chat);
     ini->SetBoolValue(Name(), VAR_NAME(flash_window_on_party_invite), flash_window_on_party_invite);
     ini->SetBoolValue(Name(), VAR_NAME(flash_window_on_zoning), flash_window_on_zoning);
+    ini->SetBoolValue(Name(), VAR_NAME(focus_window_on_launch), focus_window_on_launch);
     ini->SetBoolValue(Name(), VAR_NAME(focus_window_on_zoning), focus_window_on_zoning);
     ini->SetBoolValue(Name(), VAR_NAME(flash_window_on_cinematic), flash_window_on_cinematic);
     ini->SetBoolValue(Name(), VAR_NAME(flash_window_on_trade), flash_window_on_trade);
@@ -1014,7 +1759,7 @@ void GameSettings::SaveSettings(CSimpleIni* ini) {
     ini->SetBoolValue(Name(), VAR_NAME(show_unlearned_skill), show_unlearned_skill);
     ini->SetBoolValue(Name(), VAR_NAME(auto_skip_cinematic), auto_skip_cinematic);
 
-    
+
     ini->SetBoolValue(Name(), VAR_NAME(hide_player_speech_bubbles), hide_player_speech_bubbles);
     ini->SetBoolValue(Name(), VAR_NAME(npc_speech_bubbles_as_chat), npc_speech_bubbles_as_chat);
     ini->SetBoolValue(Name(), VAR_NAME(redirect_npc_messages_to_emote_chat), redirect_npc_messages_to_emote_chat);
@@ -1051,6 +1796,16 @@ void GameSettings::SaveSettings(CSimpleIni* ini) {
     ini->SetBoolValue(Name(), VAR_NAME(block_bottle_rockets), block_bottle_rockets);
     ini->SetBoolValue(Name(), VAR_NAME(block_ghostinthebox_effect), block_ghostinthebox_effect);
     ini->SetBoolValue(Name(), VAR_NAME(block_sparkly_drops_effect), block_sparkly_drops_effect);
+    ini->SetBoolValue(Name(), VAR_NAME(limit_signets_of_capture), limit_signets_of_capture);
+    ini->SetBoolValue(Name(), VAR_NAME(auto_open_locked_chest), auto_open_locked_chest);
+
+    ini->SetBoolValue(Name(), VAR_NAME(block_faction_gain), block_faction_gain);
+    ini->SetBoolValue(Name(), VAR_NAME(block_experience_gain), block_experience_gain);
+    ini->SetBoolValue(Name(), VAR_NAME(block_zero_experience_gain), block_zero_experience_gain);
+    ini->SetBoolValue(Name(), VAR_NAME(disable_item_descriptions_in_outpost), disable_item_descriptions_in_outpost);
+    ini->SetBoolValue(Name(), VAR_NAME(disable_item_descriptions_in_explorable), disable_item_descriptions_in_explorable);
+
+    ini->SetBoolValue(Name(), VAR_NAME(hide_email_address), hide_email_address);
 
     ::SaveChannelColor(ini, Name(), "local", GW::Chat::Channel::CHANNEL_ALL);
     ::SaveChannelColor(ini, Name(), "guild", GW::Chat::Channel::CHANNEL_GUILD);
@@ -1060,21 +1815,57 @@ void GameSettings::SaveSettings(CSimpleIni* ini) {
     ::SaveChannelColor(ini, Name(), "whispers", GW::Chat::Channel::CHANNEL_WHISPER);
     ::SaveChannelColor(ini, Name(), "emotes", GW::Chat::Channel::CHANNEL_EMOTE);
     ::SaveChannelColor(ini, Name(), "other", GW::Chat::Channel::CHANNEL_GLOBAL);
+
+    Colors::Save(ini, Name(), VAR_NAME(nametag_color_enemy), nametag_color_enemy);
+    Colors::Save(ini, Name(), VAR_NAME(nametag_color_gadget), nametag_color_gadget);
+    Colors::Save(ini, Name(), VAR_NAME(nametag_color_item), nametag_color_item);
+    Colors::Save(ini, Name(), VAR_NAME(nametag_color_npc), nametag_color_npc);
+    Colors::Save(ini, Name(), VAR_NAME(nametag_color_player_in_party), nametag_color_player_in_party);
+    Colors::Save(ini, Name(), VAR_NAME(nametag_color_player_other), nametag_color_player_other);
+    Colors::Save(ini, Name(), VAR_NAME(nametag_color_player_self), nametag_color_player_self);
 }
 
 void GameSettings::DrawInventorySettings() {
     ImGui::Checkbox("Move items from/to storage with Control+Click", &move_item_on_ctrl_click);
     ImGui::Indent();
-    ImGui::Checkbox("Move item to current open storage pane on click", &move_item_to_current_storage_pane);
-    ImGui::ShowHelp("Enabled: Using Control+Click on an item in inventory with storage chest open,\n"
-        "try to deposit item into the currently displayed storage pane.\n"
-        "Disabled: Item will be stored into any available stack/slot in the chest.");
+    ImGui::Checkbox("Move items to current open storage pane on click", &move_item_to_current_storage_pane);
+    ImGui::ShowHelp("Materials follow different logic, see below");
+    ImGui::Indent();
+    const char* logic = "Storage logic: Any available stack/slot";
+    if (move_item_to_current_storage_pane) {
+        logic = "Storage logic: Current storage pane > Any available stack/slot";
+    }
+    ImGui::TextDisabled(logic);
+    ImGui::Unindent();
+    ImGui::Checkbox("Move materials to current open storage pane on click", &move_materials_to_current_storage_pane);
+    ImGui::Indent();
+    logic = "Storage logic: Materials pane > Any available stack/slot";
+    if (move_materials_to_current_storage_pane) {
+        logic = "Storage logic: Current storage pane > Materials pane > Any available stack/slot";
+    }
+    else if (move_item_to_current_storage_pane) {
+        logic = "Storage logic: Materials pane > Current storage pane > Any available stack/slot";
+    }
+    ImGui::TextDisabled(logic);
+    ImGui::Unindent();
     ImGui::Unindent();
     ImGui::Checkbox("Shorthand item description on weapon ping", &shorthand_item_ping);
     ImGui::ShowHelp("Include a concise description of your equipped weapon when ctrl+clicking a weapon set");
 
     ImGui::Checkbox("Lazy chest looting", &lazy_chest_looting);
     ImGui::ShowHelp("Toolbox will try to target any nearby reserved items\nwhen using the 'target nearest item' key next to a chest\nto pick stuff up.");
+    ImGui::Text("Only show item names when hovering in:");
+    ImGui::ShowHelp("When hovering an item in inventory or weapon sets,\nonly show the item name in the tooltip that appears.");
+    ImGui::Indent();
+    ImGui::Checkbox("Explorable Area###disable_item_descriptions_in_explorable", &disable_item_descriptions_in_explorable);
+    ImGui::SameLine();
+    ImGui::Checkbox("Outpost###disable_item_descriptions_in_outpost", &disable_item_descriptions_in_outpost);
+    if (disable_item_descriptions_in_explorable || disable_item_descriptions_in_outpost) {
+        ImGui::Indent();
+        ImGui::TextDisabled("Hold Alt when hovering an item to show full description");
+        ImGui::Unindent();
+    }
+    ImGui::Unindent();
 }
 
 void GameSettings::DrawPartySettings() {
@@ -1143,20 +1934,23 @@ void GameSettings::DrawChatSettings() {
 }
 
 void GameSettings::DrawSettingInternal() {
-    const float column_spacing = 300.0f * ImGui::GetIO().FontGlobalScale;
+    constexpr float checkbox_w = 270.f;
+    ImGui::Checkbox("Hide email address on login screen", &hide_email_address);
     ImGui::Checkbox("Automatic /age on vanquish", &auto_age_on_vanquish);
     ImGui::ShowHelp("As soon as a vanquish is complete, send /age command to game server to receive server-side completion time.");
     ImGui::Checkbox("Automatic /age2 on /age", &auto_age2_on_age);
     ImGui::ShowHelp("GWToolbox++ will show /age2 time after /age is shown in chat");
     ImGui::Text("Flash Guild Wars taskbar icon when:");
-    ImGui::Indent();
     ImGui::ShowHelp("Only triggers when Guild Wars is not the active window");
-    ImGui::Checkbox("Receiving a private message", &flash_window_on_pm);
-    ImGui::SameLine(column_spacing); ImGui::Checkbox("Receiving a party invite", &flash_window_on_party_invite);
-    ImGui::Checkbox("Zoning in a new map", &flash_window_on_zoning);
-    ImGui::SameLine(column_spacing); ImGui::Checkbox("Cinematic start/end", &flash_window_on_cinematic);
-    ImGui::Checkbox("A player starts trade with you###flash_window_on_trade", &flash_window_on_trade);
-    ImGui::SameLine(column_spacing); ImGui::Checkbox("A party member pings your name", &flash_window_on_name_ping);
+    ImGui::Indent();
+    ImGui::StartSpacedElements(checkbox_w);
+    ImGui::NextSpacedElement(); ImGui::Checkbox("Receiving a private message", &flash_window_on_pm);
+    ImGui::NextSpacedElement(); ImGui::Checkbox("Receiving a guild message", &flash_window_on_guild_chat);
+    ImGui::NextSpacedElement(); ImGui::Checkbox("Receiving a party invite", &flash_window_on_party_invite);
+    ImGui::NextSpacedElement(); ImGui::Checkbox("Zoning in a new map", &flash_window_on_zoning);
+    ImGui::NextSpacedElement(); ImGui::Checkbox("Cinematic start/end", &flash_window_on_cinematic);
+    ImGui::NextSpacedElement(); ImGui::Checkbox("A player starts trade with you###flash_window_on_trade", &flash_window_on_trade);
+    ImGui::NextSpacedElement(); ImGui::Checkbox("A party member pings your name", &flash_window_on_name_ping);
     ImGui::Unindent();
 
     ImGui::Text("Show Guild Wars in foreground when:");
@@ -1164,29 +1958,33 @@ void GameSettings::DrawSettingInternal() {
         "the window from a minimized state when important events\n"
         "occur, such as entering instances.");
     ImGui::Indent();
-    ImGui::Checkbox("Zoning in a new map###focus_window_on_zoning", &focus_window_on_zoning);
-    ImGui::SameLine(column_spacing); ImGui::Checkbox("A player starts trade with you###focus_window_on_trade", &focus_window_on_trade);
+    ImGui::StartSpacedElements(checkbox_w);
+    ImGui::NextSpacedElement(); ImGui::Checkbox("Launching GWToolbox++###focus_window_on_launch", &focus_window_on_launch);
+    ImGui::NextSpacedElement(); ImGui::Checkbox("Zoning in a new map###focus_window_on_zoning", &focus_window_on_zoning);
+    ImGui::NextSpacedElement(); ImGui::Checkbox("A player starts trade with you###focus_window_on_trade", &focus_window_on_trade);
     ImGui::Unindent();
 
     ImGui::Text("Show a message when a friend:");
     ImGui::Indent();
-    ImGui::Checkbox("Logs in", &notify_when_friends_online);
-    ImGui::SameLine(column_spacing); ImGui::Checkbox("Joins your outpost###notify_when_friends_join_outpost", &notify_when_friends_join_outpost);
-    ImGui::Checkbox("Logs out", &notify_when_friends_offline);
-    ImGui::SameLine(column_spacing); ImGui::Checkbox("Leaves your outpost###notify_when_friends_leave_outpost", &notify_when_friends_leave_outpost);
+    ImGui::StartSpacedElements(checkbox_w);
+    ImGui::NextSpacedElement(); ImGui::Checkbox("Logs in", &notify_when_friends_online);
+    ImGui::NextSpacedElement(); ImGui::Checkbox("Joins your outpost###notify_when_friends_join_outpost", &notify_when_friends_join_outpost);
+    ImGui::NextSpacedElement(); ImGui::Checkbox("Logs out", &notify_when_friends_offline);
+    ImGui::NextSpacedElement(); ImGui::Checkbox("Leaves your outpost###notify_when_friends_leave_outpost", &notify_when_friends_leave_outpost);
     ImGui::Unindent();
 
     ImGui::Text("Show a message when a player:");
     ImGui::Indent();
-    ImGui::Checkbox("Joins your party", &notify_when_party_member_joins);
-    ImGui::SameLine(column_spacing); ImGui::Checkbox("Joins your outpost###notify_when_players_join_outpost", &notify_when_players_join_outpost);
-    ImGui::Checkbox("Leaves your party", &notify_when_party_member_leaves);
-    ImGui::SameLine(column_spacing); ImGui::Checkbox("Leaves your outpost###notify_when_players_leave_outpost", &notify_when_players_leave_outpost);
+    ImGui::StartSpacedElements(checkbox_w);
+    ImGui::NextSpacedElement(); ImGui::Checkbox("Joins your party", &notify_when_party_member_joins);
+    ImGui::NextSpacedElement(); ImGui::Checkbox("Joins your outpost###notify_when_players_join_outpost", &notify_when_players_join_outpost);
+    ImGui::NextSpacedElement(); ImGui::Checkbox("Leaves your party", &notify_when_party_member_leaves);
+    ImGui::NextSpacedElement(); ImGui::Checkbox("Leaves your outpost###notify_when_players_leave_outpost", &notify_when_players_leave_outpost);
     ImGui::Unindent();
 
     ImGui::Checkbox("Automatically set 'Away' after ", &auto_set_away);
     ImGui::SameLine();
-    ImGui::PushItemWidth(50);
+    ImGui::PushItemWidth(50.0f * ImGui::FontScale());
     ImGui::InputInt("##awaydelay", &auto_set_away_delay, 0);
     ImGui::PopItemWidth();
     ImGui::SameLine();
@@ -1230,18 +2028,26 @@ void GameSettings::DrawSettingInternal() {
     ImGui::Checkbox("Improve move to cast spell range", &improve_move_to_cast);
     ImGui::ShowHelp("This should make you stop to cast skills earlier by re-triggering the skill cast when in range.");
     ImGui::Checkbox("Auto-cancel Unyielding Aura when re-casting",&drop_ua_on_cast);
+    ImGui::Checkbox("Auto use lockpick when interacting with locked chest", &auto_open_locked_chest);
+    ImGui::Text("Block floating numbers above character when:");
+    ImGui::Indent();
+    ImGui::StartSpacedElements(checkbox_w);
+    ImGui::NextSpacedElement(); ImGui::Checkbox("Gaining faction", &block_faction_gain);
+    ImGui::NextSpacedElement(); ImGui::Checkbox("Gaining experience", &block_experience_gain);
+    ImGui::NextSpacedElement(); ImGui::Checkbox("Gaining 0 experience", &block_zero_experience_gain);
+    ImGui::Unindent();
     ImGui::Text("Disable animation and sound from consumables:");
     ImGui::Indent();
-    const char* doesnt_affect_me = "Only applies to other players";
-    ImGui::Checkbox("Tonics", &block_transmogrify_effect);
+    ImGui::StartSpacedElements(checkbox_w);
+    constexpr const char* doesnt_affect_me = "Only applies to other players";
+    ImGui::NextSpacedElement(); ImGui::Checkbox("Tonics", &block_transmogrify_effect);
     ImGui::ShowHelp(doesnt_affect_me);
-    ImGui::SameLine(column_spacing); ImGui::Checkbox("Sweets", &block_sugar_rush_effect);
+    ImGui::NextSpacedElement(); ImGui::Checkbox("Sweets", &block_sugar_rush_effect);
     ImGui::ShowHelp(doesnt_affect_me);
-    ImGui::Checkbox("Bottle rockets", &block_bottle_rockets);
+    ImGui::NextSpacedElement(); ImGui::Checkbox("Bottle rockets", &block_bottle_rockets);
     ImGui::ShowHelp(doesnt_affect_me);
-    ImGui::SameLine(column_spacing); ImGui::Checkbox("Party poppers", &block_party_poppers);
-    ImGui::ShowHelp(doesnt_affect_me);
-    ImGui::Checkbox("Snowman Summoners", &block_snowman_summoner);
+    ImGui::NextSpacedElement(); ImGui::Checkbox("Party poppers", &block_party_poppers);
+    ImGui::NextSpacedElement(); ImGui::Checkbox("Snowman Summoners", &block_snowman_summoner);
     ImGui::ShowHelp(doesnt_affect_me);
 #if 0
     //@Cleanup: Ghost in the box spawn effect suppressed, but still need to figure out how to suppress the death effect.
@@ -1251,6 +2057,20 @@ void GameSettings::DrawSettingInternal() {
     ImGui::Unindent();
     ImGui::Checkbox("Block sparkle effect on dropped items", &block_sparkly_drops_effect);
     ImGui::ShowHelp("Applies to drops that appear after this setting has been changed");
+    ImGui::Checkbox("Limit signet of capture to 10 in skills window", &limit_signets_of_capture);
+    ImGui::ShowHelp("If your character has purchased more than 10 signets of capture, only show 10 of them in the skills window");
+    ImGui::Text("In-game name tag colors:");
+    ImGui::Indent();
+    ImGui::StartSpacedElements(checkbox_w);
+    uint32_t flags = ImGuiColorEditFlags_AlphaPreview | ImGuiColorEditFlags_NoInputs;
+    ImGui::NextSpacedElement(); Colors::DrawSettingHueWheel("Myself", &nametag_color_player_self, flags);
+    ImGui::NextSpacedElement(); Colors::DrawSettingHueWheel("NPC", &nametag_color_npc, flags);
+    ImGui::NextSpacedElement(); Colors::DrawSettingHueWheel("Enemy", &nametag_color_enemy, flags);
+    ImGui::NextSpacedElement(); Colors::DrawSettingHueWheel("Gadget", &nametag_color_gadget, flags);
+    ImGui::NextSpacedElement(); Colors::DrawSettingHueWheel("Other Player", &nametag_color_player_other, flags);
+    ImGui::NextSpacedElement(); Colors::DrawSettingHueWheel("Other Player (In Party)", &nametag_color_player_in_party, flags);
+    ImGui::NextSpacedElement(); Colors::DrawSettingHueWheel("Item", &nametag_color_item, flags);
+    ImGui::Unindent();
 }
 
 void GameSettings::FactionEarnedCheckAndWarn() {
@@ -1263,7 +2083,7 @@ void GameSettings::FactionEarnedCheckAndWarn() {
     if (faction_checked)
         return; // Already checked.
     faction_checked = true;
-    GW::WorldContext * world_context = GW::GameContext::instance()->world;
+    GW::WorldContext * world_context = GW::WorldContext::instance();
     if (!world_context || !world_context->max_luxon || !world_context->total_earned_kurzick) {
         faction_checked = false;
         return; // No world context yet.
@@ -1271,7 +2091,7 @@ void GameSettings::FactionEarnedCheckAndWarn() {
     float percent;
     // Avoid invalid user input values.
     if (faction_warn_percent_amount < 0)
-        faction_warn_percent_amount = 0; 
+        faction_warn_percent_amount = 0;
     if (faction_warn_percent_amount > 100)
         faction_warn_percent_amount = 100;
     // Warn user to dump faction if we're in a luxon/kurzick mission outpost
@@ -1313,7 +2133,7 @@ void GameSettings::FactionEarnedCheckAndWarn() {
     }
 }
 void GameSettings::SetAfkMessage(std::wstring&& message) {
-    
+
     static size_t MAX_AFK_MSG_LEN = 80;
     if (message.size() <= MAX_AFK_MSG_LEN) {
         afk_message = message;
@@ -1324,12 +2144,26 @@ void GameSettings::SetAfkMessage(std::wstring&& message) {
     }
 }
 
-void GameSettings::Update(float delta) {
-    UNREFERENCED_PARAMETER(delta);
+void GameSettings::Update(float) {
+    CursorFixInitialise();
+    UpdateReinvite();
+    UpdateItemTooltip();
+    if (set_window_title_delay && TIMER_DIFF(set_window_title_delay) > 3000) {
+        SetWindowTitle(set_window_title_as_charname);
+        set_window_title_delay = 0;
+    }
+
+    // See OnSendChat
+    if (pending_wiki_search_term && pending_wiki_search_term->wstring().length()) {
+        GuiUtils::SearchWiki(pending_wiki_search_term->wstring());
+        delete pending_wiki_search_term;
+        pending_wiki_search_term = 0;
+    }
+
     // Try to print any pending messages.
     for (auto it = pending_messages.begin(); it != pending_messages.end(); ++it) {
         PendingChatMessage *m = *it;
-        if (m->IsSend() && PendingChatMessage::Cooldown()) 
+        if (m->IsSend() && PendingChatMessage::Cooldown())
             continue;
         if (m->Consume()) {
             it = pending_messages.erase(it);
@@ -1339,8 +2173,8 @@ void GameSettings::Update(float delta) {
     }
     if (auto_set_away
         && TIMER_DIFF(activity_timer) > auto_set_away_delay * 60000
-        && GW::FriendListMgr::GetMyStatus() == (DWORD)GW::Constants::OnlineStatus::ONLINE) {
-        GW::FriendListMgr::SetFriendListStatus(GW::Constants::OnlineStatus::AWAY);
+        && GW::FriendListMgr::GetMyStatus() == GW::FriendStatus::Online) {
+        GW::FriendListMgr::SetFriendListStatus(GW::FriendStatus::Away);
         activity_timer = TIMER_INIT(); // refresh the timer to avoid spamming in case the set status call fails
     }
     //UpdateFOV();
@@ -1373,8 +2207,8 @@ void GameSettings::Update(float delta) {
         }
 
         if (casting && me->GetIsMoving() && !me->skill && !me->GetIsCasting()) { // casting/skill don't update fast enough, so delay the rupt
-            const uint32_t cast_skill = pending_cast.GetSkill();
-            if (!cast_skill) // Skill ID no longer valid
+            auto cast_skill = pending_cast.GetSkill();
+            if (cast_skill == GW::Constants::SkillID::No_Skill) // Skill ID no longer valid
                 return pending_cast.reset();
 
             const float range = GetSkillRange(cast_skill);
@@ -1400,80 +2234,7 @@ void GameSettings::Update(float delta) {
         if (check_message_on_party_change)
             GameSettings::MessageOnPartyChange();
     }
-    // Re-invite logic
-    if (pending_reinvite_type != None) {
-        if (!pending_reinvite_id || GW::Map::GetInstanceType() != GW::Constants::InstanceType::Outpost) {
-            pending_reinvite_type = None;
-        }
-    }
-    switch (pending_reinvite_type) {
-    case Player: {
-        GW::PartyInfo* party = GW::PartyMgr::GetPartyInfo();
-        bool still_in_party = false;
-        for (size_t i = 0; party && party->players.valid() && i < party->players.size(); i++) {
-            auto& member = party->players[i];
-            if (member.login_number == pending_reinvite_id) {
-                still_in_party = true;
-                break;
-            }
-        }
-        GW::Player* player = GW::PlayerMgr::GetPlayerByID(pending_reinvite_id);
-        if (!player) {
-            pending_reinvite_type = None;
-            break;
-        }
-        if (!still_in_party) {
-            wchar_t message[64];
-            swprintf(message, _countof(message), L"invite %s", player->name);
-            GW::Chat::SendChat('/', message);
-            pending_reinvite_type = None;
-        }
-    } break;
-    case Hero: {
-        GW::PartyInfo* party = GW::PartyMgr::GetPartyInfo();
-        bool still_in_party = false;
-        uint32_t my_id = GW::PlayerMgr::GetPlayerNumber();
-        for (size_t i = 0; party && party->heroes.valid() && i < party->heroes.size(); i++) {
-            auto& member = party->heroes[i];
-            if (member.hero_id == pending_reinvite_id && member.owner_player_id == my_id) {
-                still_in_party = true;
-                break;
-            }
-        }
-        if (!still_in_party) {
-            GW::CtoS::SendPacket(0x8, GAME_CMSG_HERO_ADD, pending_reinvite_id);
-            pending_reinvite_type = None;
-        }
-    } break;
-    case Henchman: {
-        GW::PartyInfo* party = GW::PartyMgr::GetPartyInfo();
-        bool still_in_party = false;
-        bool is_leading = false;
-        uint32_t my_id = GW::PlayerMgr::GetPlayerNumber();
-        for (size_t i = 0; party && party->players.valid() && i < party->players.size(); i++) {
-            auto& member = party->players[i];
-            if (!member.connected())
-                continue;
-            is_leading = member.login_number == my_id;
-            break;
-        }
-        if (!is_leading) {
-            pending_reinvite_type = None;
-            break;
-        }
-        for (size_t i = 0; party && party->henchmen.valid() && i < party->henchmen.size(); i++) {
-            auto& member = party->henchmen[i];
-            if (member.agent_id == pending_reinvite_id) {
-                still_in_party = true;
-                break;
-            }
-        }
-        if (!still_in_party) {
-            GW::CtoS::SendPacket(0x8, GAME_CMSG_PARTY_INVITE_NPC, pending_reinvite_id);
-            pending_reinvite_type = None;
-        }
-    } break;
-    }
+
 }
 
 void GameSettings::DrawFOVSetting() {
@@ -1489,6 +2250,8 @@ void GameSettings::UpdateFOV() {
 
 bool GameSettings::WndProc(UINT Message, WPARAM wParam, LPARAM lParam) {
     UNREFERENCED_PARAMETER(lParam);
+
+    CursorFixWndProc(Message, wParam, lParam);
     // Open Whisper to targeted player with Ctrl + Enter
     if (Message == WM_KEYDOWN
         && wParam == VK_RETURN
@@ -1500,7 +2263,7 @@ bool GameSettings::WndProc(UINT Message, WPARAM wParam, LPARAM lParam) {
             const wchar_t* player_name = GW::PlayerMgr::GetPlayerName(target->login_number);
             ctrl_enter_whisper = true;
             GW::GameThread::Enqueue([player_name]() {
-                GW::UI::SendUIMessage(GW::UI::kOpenWhisper, (wchar_t*)player_name, nullptr);
+                GW::UI::SendUIMessage(GW::UI::UIMessage::kOpenWhisper, (wchar_t*)player_name);
                 ctrl_enter_whisper = false;
                 });
             return true;
@@ -1516,9 +2279,9 @@ bool GameSettings::WndProc(UINT Message, WPARAM wParam, LPARAM lParam) {
     static clock_t set_online_timer = TIMER_INIT();
     if (auto_set_online
         && TIMER_DIFF(set_online_timer) > 5000 // to avoid spamming in case of failure
-        && GW::FriendListMgr::GetMyStatus() == (DWORD)GW::Constants::OnlineStatus::AWAY) {
+        && GW::FriendListMgr::GetMyStatus() == GW::FriendStatus::Away) {
         printf("%X\n", Message);
-        GW::FriendListMgr::SetFriendListStatus(GW::Constants::OnlineStatus::ONLINE);
+        GW::FriendListMgr::SetFriendListStatus(GW::FriendStatus::Online);
         set_online_timer = TIMER_INIT();
     }
 
@@ -1531,25 +2294,25 @@ void GameSettings::FriendStatusCallback(
     GW::FriendStatus status,
     const wchar_t *alias,
     const wchar_t *charname) {
-    
+
     if (!f || !charname || *charname == L'\0')
         return;
 
     GameSettings& game_setting = GameSettings::Instance();
     if (status == f->status)
         return;
-    wchar_t buffer[512];
+    wchar_t buffer[128];
     switch (status) {
-    case GW::FriendStatus::FriendStatus_Offline:
+    case GW::FriendStatus::Offline:
         if (game_setting.notify_when_friends_offline) {
             swprintf(buffer, _countof(buffer), L"%s (%s) has just logged out.", charname, alias);
             GW::Chat::WriteChat(GW::Chat::Channel::CHANNEL_GLOBAL, buffer);
         }
         return;
-    case GW::FriendStatus::FriendStatus_Away:
-    case GW::FriendStatus::FriendStatus_DND:
-    case GW::FriendStatus::FriendStatus_Online:
-        if (f->status != GW::FriendStatus::FriendStatus_Offline)
+    case GW::FriendStatus::Away:
+    case GW::FriendStatus::DND:
+    case GW::FriendStatus::Online:
+        if (f->status != GW::FriendStatus::Offline)
             return;
         if (game_setting.notify_when_friends_online) {
             swprintf(buffer, _countof(buffer), L"<a=1>%s</a> (%s) has just logged in.</c>", charname, alias);
@@ -1560,18 +2323,17 @@ void GameSettings::FriendStatusCallback(
 }
 
 // Show weapon description/mods when pinged
-void GameSettings::OnPingWeaponSet(GW::HookStatus* status, void* packet) {
+void GameSettings::OnPingWeaponSet(GW::HookStatus* status, GW::UI::UIMessage message_id, void* wparam, void*) {
+    ASSERT(message_id == GW::UI::UIMessage::kSendPingWeaponSet && wparam);
     if (!Instance().shorthand_item_ping)
         return;
-    struct PingItemPacket {
-        uint32_t header;
-        uint32_t unk0;
-        uint32_t item_id_1;
-        uint32_t item_id_2;
-    };
-    PingItemPacket* pack = static_cast<PingItemPacket*>(packet);
-    PingItem(pack->item_id_1, PING_PARTS::NAME | PING_PARTS::DESC);
-    PingItem(pack->item_id_2, PING_PARTS::NAME | PING_PARTS::DESC);
+    struct Packet {
+        uint32_t agent_id;
+        uint32_t weapon_item_id;
+        uint32_t offhand_item_id;
+    } * pack = (Packet*)wparam;
+    PingItem(pack->weapon_item_id, PING_PARTS::NAME | PING_PARTS::DESC);
+    PingItem(pack->offhand_item_id, PING_PARTS::NAME | PING_PARTS::DESC);
     status->blocked = true;
 }
 
@@ -1606,38 +2368,6 @@ void GameSettings::OnPlayerJoinInstance(GW::HookStatus* status, GW::Packet::StoC
     }
 }
 
-// Allow clickable name when a player pings "I'm following X" or "I'm targeting X"
-void GameSettings::OnLocalChatMessage(GW::HookStatus* status, GW::Packet::StoC::MessageLocal* pak) {
-    if (pak->channel != static_cast<uint32_t>(GW::Chat::Channel::CHANNEL_GROUP) || !pak->player_number)
-        return; // Not team chat or no sender
-    std::wstring message(GetMessageCore());
-    if (message[0] != 0x778 && message[0] != 0x781)
-        return; // Not "I'm Following X" or "I'm Targeting X" message.
-    size_t start_idx = message.find(L"\xba9\x107");
-    if (start_idx == std::wstring::npos)
-        return; // Not a player name.
-    start_idx += 2;
-    size_t end_idx = message.find(L"\x1", start_idx);
-    if (end_idx == std::wstring::npos)
-        return; // Not a player name, this should never happen.
-    std::wstring player_pinged = GuiUtils::SanitizePlayerName(message.substr(start_idx, end_idx));
-    if (player_pinged.empty())
-        return; // No recipient
-    GW::Player* sender = GW::PlayerMgr::GetPlayerByID(pak->player_number);
-    if (!sender)
-        return;// No sender
-    auto instance = &Instance();
-    if (instance->flash_window_on_name_ping && GetPlayerName() == player_pinged)
-        FlashWindow(); // Flash window - we've been followed!
-    // Allow clickable player name
-    message.insert(start_idx, L"<a=1>");
-    message.insert(end_idx + 5, L"</a>");
-    PendingChatMessage* m = PendingChatMessage::queuePrint(GW::Chat::Channel::CHANNEL_GROUP, message.c_str(), sender->name_enc);
-    if (m) instance->pending_messages.push_back(m);
-    ::ClearMessageCore();
-    status->blocked = true; // consume original packet.
-}
-
 // Open links on player name click, Ctrl + click name to target, Ctrl + Shift + click name to invite
 void GameSettings::OnStartWhisper(GW::HookStatus* status, wchar_t* _name) {
     if (!_name) return;
@@ -1645,8 +2375,7 @@ void GameSettings::OnStartWhisper(GW::HookStatus* status, wchar_t* _name) {
     switch (_name[0]) {
         case 0x200B: {
             // Zero-Width Space - wiki link
-            std::string s = "https://wiki.guildwars.com/wiki/" + GuiUtils::UrlEncode(GuiUtils::WStringToString(&_name[1]));
-            ShellExecute(NULL, "open", s.c_str(), NULL, NULL, SW_SHOWNORMAL);
+            GuiUtils::SearchWiki(&_name[1]);
             status->blocked = true;
             return;
         }
@@ -1667,7 +2396,7 @@ void GameSettings::OnStartWhisper(GW::HookStatus* status, wchar_t* _name) {
         return; // - Next logic only applicable when Ctrl is held
 
     std::wstring name = GuiUtils::SanitizePlayerName(_name);
-    if (ImGui::GetIO().KeyShift && GW::PartyMgr::GetPlayerIsLeader()) {
+    if (ImGui::GetIO().KeyShift && GW::PartyMgr::GetIsLeader()) {
         wchar_t buf[64];
         swprintf(buf, 64, L"invite %s", name.c_str());
         GW::Chat::SendChat('/', buf);
@@ -1679,28 +2408,31 @@ void GameSettings::OnStartWhisper(GW::HookStatus* status, wchar_t* _name) {
         GW::Agents::ChangeTarget(player->agent_id);
         status->blocked = true;
     }
-    
+
 }
 
 // Auto accept invitations, flash window on received party invite
 void GameSettings::OnPartyInviteReceived(GW::HookStatus* status, GW::Packet::StoC::PartyInviteReceived_Create* packet) {
     UNREFERENCED_PARAMETER(status);
-    GameSettings *instance = &Instance();
-    if (GW::Map::GetInstanceType() != GW::Constants::InstanceType::Outpost || !GetPlayerIsLeader())
+    const auto& instance = Instance();
+    if (status->blocked)
         return;
+    if (GW::Map::GetInstanceType() != GW::Constants::InstanceType::Outpost || !GW::PartyMgr::GetIsLeader())
+        return;
+
     if (GW::PartyMgr::GetIsPlayerTicked()) {
-        PartyInfo* other_party = GetPartyInfo(packet->target_party_id);
-        PartyInfo* my_party = GetPartyInfo();
-        if (instance->auto_accept_invites && other_party && my_party && my_party->GetPartySize() <= other_party->GetPartySize()) {
+        GW::PartyInfo* other_party = GW::PartyMgr::GetPartyInfo(packet->target_party_id);
+        GW::PartyInfo* my_party = GW::PartyMgr::GetPartyInfo();
+        if (instance.auto_accept_invites && other_party && my_party && my_party->GetPartySize() <= other_party->GetPartySize()) {
             // Auto accept if I'm joining a bigger party
-            GW::CtoS::SendPacket(0x8, GAME_CMSG_PARTY_ACCEPT_INVITE, packet->target_party_id);
+            GW::PartyMgr::RespondToPartyRequest(packet->target_party_id, true);
         }
-        if (instance->auto_accept_join_requests && other_party && my_party && my_party->GetPartySize() > other_party->GetPartySize()) {
+        if (instance.auto_accept_join_requests && other_party && my_party && my_party->GetPartySize() > other_party->GetPartySize()) {
             // Auto accept join requests if I'm the bigger party
-            GW::CtoS::SendPacket(0x8, GAME_CMSG_PARTY_ACCEPT_INVITE, packet->target_party_id);
+            GW::PartyMgr::RespondToPartyRequest(packet->target_party_id, true);
         }
     }
-    if (instance->flash_window_on_party_invite)
+    if (instance.flash_window_on_party_invite)
         FlashWindow();
 }
 
@@ -1717,9 +2449,17 @@ void GameSettings::OnPartyPlayerJoined(GW::HookStatus* status, GW::Packet::StoC:
         GW::AgentLiving* me = GW::Agents::GetPlayerAsAgentLiving();
         if (!me) return;
         if (packet->player_id == me->login_number
-            || (packet->party_id == current_party->party_id && GetPlayerIsLeader())) {
+            || (packet->party_id == current_party->party_id && GW::PartyMgr::GetIsLeader())) {
             FlashWindow();
         }
+    }
+}
+
+// Block overhead arrow marker for zaishen scout
+void GameSettings::OnAgentMarker(GW::HookStatus*, GW::Packet::StoC::GenericValue* pak) {
+    const GW::Agent* a = GW::Agents::GetAgentByID(pak->agent_id);
+    if (a && wcscmp(GW::Agents::GetAgentEncName(a),L"\x8102\x6ED9\xD94E\xBF68\x4409") == 0) {
+        pak->value_id = 12;
     }
 }
 
@@ -1798,13 +2538,13 @@ void GameSettings::OnUpdateAgentState(GW::HookStatus* status, GW::Packet::StoC::
     }
 }
 
-// Apply Collector's Edition animations on player dancing, 
+// Apply Collector's Edition animations on player dancing,
 void GameSettings::OnAgentLoopingAnimation(GW::HookStatus*, GW::Packet::StoC::GenericValue* pak) {
     if (pak->agent_id != GW::Agents::GetPlayerId() || !Instance().collectors_edition_emotes)
         return;
     static GW::Packet::StoC::GenericValue pak2;
     pak2.agent_id = pak->agent_id;
-    pak2.Value_id = 23;
+    pak2.value_id = 23;
     pak2.value = pak->value; // Glowing hands, any profession
     if (pak->value == 0x43394f1d) { // 0x31939cbb = /dance, 0x43394f1d = /dancenew
         switch ((GW::Constants::Profession)GW::Agents::GetPlayerAsAgentLiving()->primary) {
@@ -1822,34 +2562,44 @@ void GameSettings::OnAgentLoopingAnimation(GW::HookStatus*, GW::Packet::StoC::Ge
 }
 
 // Skip char name entry dialog when donating faction
-void GameSettings::OnFactionDonate(GW::HookStatus* status, uint32_t dialog_id) {
-    if (dialog_id != 135) return;
-    const int LuxonFactionNPC = GW::Constants::ModelID::Urgoz::HoppingVampire - 102;
-    const int KurzickFactionNPC = LuxonFactionNPC - 229;
-    auto instance = &Instance();
-    if (!instance->skip_entering_name_for_faction_donate) return;
+void GameSettings::OnFactionDonate(GW::HookStatus* status, GW::UI::UIMessage, void* wparam, void*) {
+    uint32_t dialog_id = (uint32_t)wparam;
+    if (!(dialog_id == 0x87 && Instance().skip_entering_name_for_faction_donate))
+        return;
+    uint32_t allegiance = 2;
+    const wchar_t* raising_luxon_faction_cap = L"\x8102\x4A32\xAF32\xBDB5\x21AE";
+    const wchar_t* raising_kurzick_faction_cap = L"\x8102\x4A26\x814C\x89CC\x5B0";
+    // Look for "Raising Luxon/Kurzick faction cap" dialog option to check allegiance
+    for (const auto dialog : DialogModule::Instance().GetDialogButtons()) {
+        if (wcscmp(dialog->message, raising_luxon_faction_cap) == 0)
+            allegiance = 1; // Luxon
+        if (wcscmp(dialog->message, raising_kurzick_faction_cap) == 0)
+            allegiance = 0; // Kurzick
+        if (dialog->dialog_id == dialog_id
+            && wcscmp(dialog->message, L"\x8102\x0444\xa441\xc28e\x0193") != 0) {
+            return; // Not faction donation message
+        }
+    }
     uint32_t* current_faction = nullptr;
-    uint32_t allegiance = 0;
-    // Dialog 135 is also used for other NPCs e.g. zaishen keys. Use last_dialog_npc_id to compare.
-    switch (last_dialog_npc_id) {
-    case LuxonFactionNPC:
-        current_faction = &GW::GameContext::instance()->world->current_luxon;
-        allegiance = 1;
+    switch (allegiance) {
+    case 0: // Kurzick
+        current_faction = &GW::WorldContext::instance()->current_kurzick;
         break;
-    case KurzickFactionNPC:
-        current_faction = &GW::GameContext::instance()->world->current_kurzick;
-        allegiance = 0;
+    case 1: // Luxon
+        current_faction = &GW::WorldContext::instance()->current_luxon;
         break;
-    default:
+    default: // Didn't find an allegiance?
+        Log::Error("Failed to find allegiance from NPC");
         return;
     }
-    GW::GuildContext* c = GW::GuildMgr::GetGuildContext();
+    GW::GuildContext* c = GW::GuildContext::instance();
     if (!c || !c->player_guild_index || c->guilds[c->player_guild_index]->faction != allegiance)
         return; // Alliance isn't the right faction. Return here and the NPC will reply.
     if (*current_faction < 5000)
         return; // Not enough to donate. Return here and the NPC will reply.
     status->blocked = true;
-    GW::CtoS::SendPacket(0x10, GAME_CMSG_DEPOSIT_FACTION, 0, allegiance, 5000);
+    GW::PlayerMgr::DepositFaction(allegiance);
+    GW::Agents::GoNPC(GW::Agents::GetAgentByID(DialogModule::GetDialogAgent()));
 }
 
 // Show a message when player leaves the outpost
@@ -1860,8 +2610,6 @@ void GameSettings::OnPlayerLeaveInstance(GW::HookStatus* status, GW::Packet::Sto
         return; // Dont notify about player leaving
     if (!pak->player_number || GW::Map::GetInstanceType() != GW::Constants::InstanceType::Outpost)
         return; // Only message in an outpost.
-    if (pak->player_number >= GW::PlayerMgr::GetPlayerArray().size())
-        return; // Not a valid player.
     wchar_t* player_name = GW::PlayerMgr::GetPlayerName(pak->player_number);
     if (!player_name)
         return; // Failed to get name
@@ -1904,9 +2652,9 @@ void GameSettings::OnNPCChatMessage(GW::HookStatus* status, GW::Packet::StoC::Me
 // Automatically return to outpost on defeat
 void GameSettings::OnPartyDefeated(GW::HookStatus* status, GW::Packet::StoC::PartyDefeated*) {
     UNREFERENCED_PARAMETER(status);
-    if (!Instance().auto_return_on_defeat || !GetPlayerIsLeader())
+    if (!Instance().auto_return_on_defeat || !GW::PartyMgr::GetIsLeader())
         return;
-    GW::CtoS::SendPacket(0x4, GAME_CMSG_PARTY_RETURN_TO_OUTPOST);
+    GW::PartyMgr::ReturnToOutpost();
 }
 
 // Automatically send /age2 on /age.
@@ -1920,6 +2668,49 @@ void GameSettings::OnServerMessage(GW::HookStatus* status, GW::Packet::StoC::Mes
     if (wmemcmp(msg, L"\x8101\x641F\x86C3\xE149\x53E8", 5) == 0 || wmemcmp(msg, L"\x8101\x641E\xE7AD\xEF64\x1676", 5) == 0) {
         GW::Chat::SendChat('/', "age2");
     }
+}
+
+// Flash window on guild chat message
+void GameSettings::OnGlobalMessage(GW::HookStatus* status, GW::Packet::StoC::MessageGlobal* pak) {
+    if(status->blocked)
+        return; // Sender blocked, packet handled.
+    if (!Instance().flash_window_on_guild_chat ||   // Flash window on guild chat message
+        static_cast<GW::Chat::Channel>(pak->channel) != GW::Chat::Channel::CHANNEL_GUILD)
+        return; // Disabled or messsage not from guild chat
+        const auto sender_name = std::wstring(pak->sender_name);
+    if (const auto player_name = GetPlayerName(); sender_name == player_name)
+        return; // we sent the message ourselves
+    FlashWindow();
+}
+
+// Allow clickable name when a player pings "I'm following X" or "I'm targeting X"
+void GameSettings::OnLocalChatMessage(GW::HookStatus* status, GW::Packet::StoC::MessageLocal* pak) {
+    if (status->blocked)
+        return; // Sender blocked, packet handled.
+    if (pak->channel != static_cast<uint32_t>(GW::Chat::Channel::CHANNEL_GROUP) || !pak->player_number)
+        return; // Not team chat or no sender
+    std::wstring message(GetMessageCore());
+    if (message[0] != 0x778 && message[0] != 0x781) return; // Not "I'm Following X" or "I'm Targeting X" message.
+    size_t start_idx = message.find(L"\xba9\x107");
+    if (start_idx == std::wstring::npos) return; // Not a player name.
+    start_idx += 2;
+    size_t end_idx = message.find(L"\x1", start_idx);
+    if (end_idx == std::wstring::npos) return; // Not a player name, this should never happen.
+    std::wstring player_pinged = GuiUtils::SanitizePlayerName(message.substr(start_idx, end_idx));
+    if (player_pinged.empty()) return; // No recipient
+    GW::Player* sender = GW::PlayerMgr::GetPlayerByID(pak->player_number);
+    if (!sender) return; // No sender
+    auto instance = &Instance();
+    if (instance->flash_window_on_name_ping && GetPlayerName() == player_pinged)
+        FlashWindow(); // Flash window - we've been followed!
+    // Allow clickable player name
+    message.insert(start_idx, L"<a=1>");
+    message.insert(end_idx + 5, L"</a>");
+    PendingChatMessage* m =
+        PendingChatMessage::queuePrint(GW::Chat::Channel::CHANNEL_GROUP, message.c_str(), sender->name_enc);
+    if (m) instance->pending_messages.push_back(m);
+    ::ClearMessageCore();
+    status->blocked = true; // consume original packet.
 }
 
 // Print NPC speech bubbles to emote chat.
@@ -1944,8 +2735,7 @@ void GameSettings::OnSpeechDialogue(GW::HookStatus* status, GW::Packet::StoC::Di
     auto instance = &Instance();
     if (!instance->redirect_npc_messages_to_emote_chat)
         return; // Disabled or message pending
-    PendingChatMessage* m = PendingChatMessage::queuePrint(GW::Chat::Channel::CHANNEL_EMOTE, pak->message, pak->name);
-    if (m) instance->pending_messages.push_back(m);
+    GW::Chat::WriteChatEnc(GW::Chat::Channel::CHANNEL_EMOTE, pak->message, pak->name);
     status->blocked = true; // consume original packet.
 }
 
@@ -1963,7 +2753,9 @@ void GameSettings::OnDungeonReward(GW::HookStatus* status, GW::Packet::StoC::Dun
 }
 
 // Flash/focus window on trade
-void GameSettings::OnTradeStarted(GW::HookStatus*, GW::Packet::StoC::TradeStart*) {
+void GameSettings::OnTradeStarted(GW::HookStatus* status, GW::Packet::StoC::TradeStart*) {
+    if (status->blocked)
+        return;
     auto instance = &Instance();
     if (instance->flash_window_on_trade)
         FlashWindow();
@@ -2000,182 +2792,36 @@ void GameSettings::OnMapTravel(GW::HookStatus* status, GW::Packet::StoC::GameSrv
 }
 
 // Disable native timestamps
-void GameSettings::OnCheckboxPreferenceChanged(GW::HookStatus* status, uint32_t msgid, void* wParam, void* lParam) {
+void GameSettings::OnCheckboxPreferenceChanged(GW::HookStatus* status, GW::UI::UIMessage msgid, void* wParam, void* lParam) {
     UNREFERENCED_PARAMETER(lParam);
     if (!(msgid == GW::UI::UIMessage::kCheckboxPreference && wParam))
         return;
-    uint32_t pref = *(uint32_t*)wParam; // { uint32_t pref, uint32_t value } - don't care about value atm.
-    if (pref == GW::UI::CheckboxPreference::CheckboxPreference_ShowChatTimestamps && Instance().show_timestamps) {
+    GW::UI::FlagPreference pref = *(GW::UI::FlagPreference*)wParam; // { uint32_t pref, uint32_t value } - don't care about value atm.
+    if (pref == GW::UI::FlagPreference::ShowChatTimestamps && Instance().show_timestamps) {
         status->blocked = true; // Always block because this UI Message will redraw all timestamps later in the call stack
-        if (Instance().show_timestamps && GW::UI::GetCheckboxPreference(GW::UI::CheckboxPreference::CheckboxPreference_ShowChatTimestamps) == 1) {
+        if (Instance().show_timestamps && GW::UI::GetPreference(GW::UI::FlagPreference::ShowChatTimestamps) == 1) {
             Log::Error("Disable GWToolbox timestamps to enable this setting");
-            GW::UI::SetCheckboxPreference(GW::UI::CheckboxPreference::CheckboxPreference_ShowChatTimestamps, 0);
+            GW::UI::SetPreference(GW::UI::FlagPreference::ShowChatTimestamps, 0);
         }
     }
-}
-
-// Record current party target - this isn't always the same as the compass target.
-void GameSettings::OnPartyTargetChange(GW::HookStatus* , uint32_t event_id, uint32_t type, void* wParam, void* lParam) {
-    UNREFERENCED_PARAMETER(event_id);
-    UNREFERENCED_PARAMETER(lParam);
-    // type 0x6 == "Highlight control in frame"
-    if (!(type == 0x6 && (uint32_t)wParam > 0xffffff && !lParam))
-        return;
-    // NB: Trade and quest log (maybe some others) get through here, but wParam is always a pointer to something.
-    PartyTargetInfo* pti = (PartyTargetInfo*)wParam;
-    // Test 1: Check target_type, make sure its something we're interested in
-    switch (pti->target_type) {
-    case 0x0:
-    case 0x1:
-    case 0x2:
-    case 0x3:
-    case 0x5:
-    case 0x9:
-        break;
-    default:
-        return;
-    }
-    // Test 2: Check has_target, make sure its a valid bool value
-    if (pti->is_party_member != 0x1 && pti->is_party_member != 0x0)
-        return;
-    // Copy
-    party_target_info = *pti;
 }
 
 void GameSettings::CmdReinvite(const wchar_t*, int, LPWSTR*) {
-    ReinviteType& target_type = Instance().pending_reinvite_type;
-    uint32_t& target_identifier = Instance().pending_reinvite_id;
-    target_type = None;
-    target_identifier = 0;
-    GW::PartyInfo* party = GW::PartyMgr::GetPartyInfo();
-    if (!party || !party->players.valid())
-        return;
-    GW::Player* first_player = nullptr;
-    GW::Player* next_player = nullptr;
-    GW::AgentLiving* me = GW::Agents::GetPlayerAsAgentLiving();
-    if (!me)
-        return;
-    switch (party_target_info.target_type) {
-    case 0x9: // Targetting player, identifer = player_number
-        target_type = Player;
-        target_identifier = party_target_info.target_identifier;
-        break;
-    case 0x2:// Targetting henchman, identifier = agent_id
-        target_type = Henchman;
-        target_identifier = party_target_info.target_identifier;
-        break;
-    case 0x3: // Targetting hero, identifier = player_number & agent_id
-        target_type = Hero;
-        // NOTE: Although this seems to be a valid agent_id, its not a valid agent so GetAgentByID() won't work here.
-        target_identifier = (uint32_t)party_target_info.target_identifier & 0x0000ffff;
-        break;
-    case 0x1: // Hero in Party Search window, identifier = hero_id
-    case 0x5: // Targetting pending player, identifier = player_number
-    default:
+    if (!current_party_target_id) {
         Log::ErrorW(L"Target a party member to re-invite");
         return;
     }
+    pending_reinvite.reset(current_party_target_id);
 
-    // Build some references
-    bool target_in_party = false;
-    for (size_t i = 0; party->players.valid() && i < party->players.size(); i++) {
-        auto& member = party->players[i];
-        if (!member.connected())
-            continue;
-        if (!first_player) {
-            first_player = GW::PlayerMgr::GetPlayerByID(member.login_number);
-        }
-        else if (!next_player) {
-            next_player = GW::PlayerMgr::GetPlayerByID(member.login_number);
-        }
-        if (target_type == Player && member.login_number == target_identifier) {
-            target_in_party = true;
-        }
-    }
-    if (!first_player) {
-        Log::ErrorW(L"Failed to find party leader");
-        return;
-    }
-    bool leading = first_player->agent_id == me->agent_id;
-
-    switch (target_type) {
-    case Player:
-        if (target_identifier == me->login_number) {
-            // If I'm targeting myself, or I'm not leading; leave and re-join.
-            if (!leading) {
-                next_player = first_player;
-            }
-            GW::AgentLiving* next_player_agent = next_player ? static_cast<GW::AgentLiving*>(GW::Agents::GetAgentByID(next_player->agent_id)) : nullptr;
-            if (!next_player_agent || !next_player_agent->GetIsLivingType() || !next_player_agent->IsPlayer()) {
-                Log::ErrorW(L"No-one is around to re-join");
-                target_type = None;
-                return;
-            }
-            target_identifier = next_player_agent->login_number;
-            GW::CtoS::SendPacket(0x4, GAME_CMSG_PARTY_LEAVE_GROUP);
-            return;
-        }
-        else if (!leading) {
-            Log::ErrorW(L"Only party leader can re-invite players");
-            target_type = None;
-            return;
-        }
-        else if (target_in_party) {
-            // Kick this player and re-invite
-            GW::CtoS::SendPacket(0x8, GAME_CMSG_PARTY_KICK_PLAYER, target_identifier);
-        }
-        else {
-            // We want to re-invite a player that isn't in the party already; do nothing and we'll invite the player on next frame.
-        }
-        break;
-    case Hero:
-        // Check that this is my hero
-        target_type = None;
-        for (size_t i = 0; target_type == None && party->heroes.valid() && i < party->heroes.size(); i++) {
-            auto& member = party->heroes[i];
-            if (member.agent_id == target_identifier) {
-                if (member.owner_player_id != me->login_number) {
-                    Log::ErrorW(L"The targetted hero doesn't belong to you");
-                    target_type = None;
-                    return;
-                }
-                target_type = Hero;
-                target_identifier = member.hero_id;
-                break;
-            }
-        }
-        if (target_type == None) {
-            Log::ErrorW(L"Failed to find Hero for agent_id %d", target_identifier);
-            return;
-        }
-        // Kick this hero
-        GW::CtoS::SendPacket(0x8, GAME_CMSG_HERO_KICK, target_identifier);
-        break;
-    case Henchman:
-        if (!leading) {
-            Log::ErrorW(L"Only party leader can re-invite henchmen");
-            target_type = None;
-            return;
-        }
-        // Kick this henchman
-        GW::CtoS::SendPacket(0x8, GAME_CMSG_PARTY_KICK_NPC, target_identifier);
-        break;
-    default:
-        Log::ErrorW(L"Target a party member to re-invite");
-        target_type = None;
-        return;
-    }
 }
 
 // Turn screenshots into clickable links
-void GameSettings::OnWriteChat(GW::HookStatus* status, uint32_t msgid, void* wParam, void*) {
+void GameSettings::OnWriteChat(GW::HookStatus* status, GW::UI::UIMessage, void* wParam, void*) {
     static bool is_redirecting = false;
     if (is_redirecting) {
         is_redirecting = false;
         return;
     }
-    if (!(msgid == GW::UI::kWriteToChatLog && wParam))
-        return;
     PlayerChatMessage* msg = static_cast<PlayerChatMessage*>(wParam);
     if (msg->channel != GW::Chat::Channel::CHANNEL_GLOBAL)
         return;
@@ -2192,7 +2838,7 @@ void GameSettings::OnWriteChat(GW::HookStatus* status, uint32_t msgid, void* wPa
         new_message[new_message_len++] = msg->message[i];
         if (msg->message[i] == '\\' && msg->message[i - 1] == '\\')
             continue; // Skip double escaped directory separators when getting the actual file name
-        file_path[file_path_len++] = msg->message[i]; 
+        file_path[file_path_len++] = msg->message[i];
     }
     file_path[file_path_len] = 0;
     wcscpy(&new_message[new_message_len], L"</a>\x1");
@@ -2219,9 +2865,43 @@ void GameSettings::OnWriteChat(GW::HookStatus* status, uint32_t msgid, void* wPa
     CloseClipboard();
 }
 
+// Turn /wiki into /wiki <location>
+void GameSettings::OnSendChat(GW::HookStatus* , GW::Chat::Channel chan, wchar_t* msg) {
+    if (!GameSettings::Instance().auto_url || !msg) return;
+    size_t len = wcslen(msg);
+    size_t max_len = 120;
+
+    if (chan == GW::Chat::Channel::CHANNEL_WHISPER) {
+        // msg == "Whisper Target Name,msg"
+        size_t i;
+        for (i = 0; i < len; i++)
+            if (msg[i] == ',')
+                break;
+
+        if (i < len) {
+            msg += i + 1;
+            len -= i + 1;
+            max_len -= i + 1;
+        }
+    }
+
+    if (wcsncmp(msg, L"http://", 7) && wcsncmp(msg, L"https://", 8)) return;
+
+    if (len + 5 < max_len) {
+        for (size_t i = len; i != 0; --i)
+            msg[i] = msg[i - 1];
+        msg[0] = '[';
+        msg[len + 1] = ';';
+        msg[len + 2] = 'x';
+        msg[len + 3] = 'x';
+        msg[len + 4] = ']';
+        msg[len + 5] = 0;
+    }
+}
+
 // Auto-drop UA when recasting
-void GameSettings::OnAgentStartCast(GW::HookStatus* , uint32_t msgid, void* wParam, void*) {
-    if (!(msgid == 0x10000027 && wParam && Instance().drop_ua_on_cast))
+void GameSettings::OnAgentStartCast(GW::HookStatus* , GW::UI::UIMessage, void* wParam, void*) {
+    if (!(wParam && Instance().drop_ua_on_cast))
         return;
     struct Casting {
         uint32_t agent_id;
@@ -2230,31 +2910,48 @@ void GameSettings::OnAgentStartCast(GW::HookStatus* , uint32_t msgid, void* wPar
     if (casting->agent_id == GW::Agents::GetPlayerId() && casting->skill_id == GW::Constants::SkillID::Unyielding_Aura) {
         // Cancel UA before recast
         const GW::Buff* buff = GW::Effects::GetPlayerBuffBySkillId(casting->skill_id);
-        if (buff && buff->skill_id) {
+        if (buff && buff->skill_id != GW::Constants::SkillID::No_Skill) {
             GW::Effects::DropBuff(buff->buff_id);
         }
     }
 };
 
-// Don't target chest as nearest item, Target green items from chest last
-void GameSettings::OnChangeTarget(GW::HookStatus* status, uint32_t msgid, void* wParam, void*) {
-    if (!(msgid == GW::UI::kChangeTarget && wParam))
-        return;
-    GW::UI::ChangeTargetUIMsg* msg = (GW::UI::ChangeTargetUIMsg*)wParam;
-    // Logic for re-inviting players
-    if (msg->manual_target_id) {
-        // Target changed
-        GW::AgentLiving* agent = static_cast<GW::AgentLiving*>(GW::Agents::GetAgentByID(msg->manual_target_id));
-        if (agent && agent->GetIsLivingType() && agent->IsPlayer()) {
-            party_target_info.target_type = 0x9;
-            party_target_info.target_identifier = agent->player_number;
+// Redirect /wiki commands to go to useful pages
+void GameSettings::OnOpenWiki(GW::HookStatus* status, GW::UI::UIMessage, void* wParam, void*) {
+    std::string url = GuiUtils::ToLower((char*)wParam);
+    if (strstr(url.c_str(), "/wiki/main_page")) {
+        // Redirect /wiki to /wiki <current map name>
+        status->blocked = true;
+        GW::AreaInfo* map = GW::Map::GetCurrentMapInfo();
+        Instance().pending_wiki_search_term = new GuiUtils::EncString(map->name_id);
+    }
+    else if (strstr(url.c_str(), "?search=quest")) {
+        // Redirect /wiki quest to /wiki <current quest name>
+        status->blocked = true;
+        auto* quest = GW::PlayerMgr::GetActiveQuest();
+        if (quest) {
+            Instance().pending_wiki_search_term = new GuiUtils::EncString(quest->name);
+        }
+        else {
+            Log::Error("No current active quest");
         }
     }
-    else {
-        // Target cleared.
-        party_target_info.target_type = 0;
-        party_target_info.target_identifier = 0;
+    else if (strstr(url.c_str(), "?search=target")) {
+        // Redirect /wiki target to /wiki <current target name>
+        status->blocked = true;
+        const GW::Agent* a = GW::Agents::GetTarget();
+        if (a) {
+            Instance().pending_wiki_search_term = new GuiUtils::EncString(GW::Agents::GetAgentEncName(a));
+        }
+        else {
+            Log::Error("No current target");
+        }
     }
+}
+
+// Don't target chest as nearest item, Target green items from chest last
+void GameSettings::OnChangeTarget(GW::HookStatus* status, GW::UI::UIMessage, void* wParam, void*) {
+    GW::UI::ChangeTargetUIMsg* msg = (GW::UI::ChangeTargetUIMsg*)wParam;
     // Logic for targetting nearest item.
     if (!Instance().targeting_nearest_item)
         return;
@@ -2263,10 +2960,8 @@ void GameSettings::OnChangeTarget(GW::HookStatus* status, uint32_t msgid, void* 
         return;
     uint32_t override_manual_agent_id = 0;
     GW::Item* target_item = nullptr;
-    const GW::AgentArray agents = GW::Agents::GetAgentArray();
-    if (!agents.valid())
-        return;
-    GW::Agent* me = GW::Agents::GetPlayer();
+    const GW::AgentArray* agents = GW::Agents::GetAgentArray();
+    GW::Agent* me = agents ? GW::Agents::GetPlayer() : nullptr;
     if (!me)
         return;
     // If the item targeted is a green that belongs to me, and its next to the chest, try to find another item instead.
@@ -2274,7 +2969,7 @@ void GameSettings::OnChangeTarget(GW::HookStatus* status, uint32_t msgid, void* 
         target_item = GW::Items::GetItemById(((GW::AgentItem*)chosen_target)->item_id);
         if (!target_item || (target_item->interaction & 0x10) == 0)
             return; // Failed to get target item, or is not green.
-        for (auto* agent : agents) {
+        for (auto* agent : *agents) {
             if (!agent) continue;
             if (!agent->GetIsGadgetType()) continue;
             if (GW::GetDistance(agent->pos, chosen_target->pos) <= GW::Constants::Range::Nearby) {
@@ -2285,12 +2980,12 @@ void GameSettings::OnChangeTarget(GW::HookStatus* status, uint32_t msgid, void* 
             }
         }
     }
-    
+
     // If we're targeting a gadget (presume its the chest), try to find adjacent items that belong to me instead.
     if (chosen_target->GetIsGadgetType()) {
         float closest_item_dist = GW::Constants::Range::Compass;
         GW::AgentItem* agent_item = nullptr;
-        for (auto* agent : agents) {
+        for (auto* agent : *agents) {
             if (!agent || !agent->GetIsItemType()) continue;
             agent_item = agent->GetAsAgentItem();
             if (!agent_item || agent_item->owner != me->agent_id) continue;
@@ -2334,23 +3029,50 @@ void GameSettings::OnMapLoaded(GW::HookStatus*, GW::Packet::StoC::MapLoaded*) {
 }
 
 // Hide player chat message speech bubbles by redirecting from 0x10000081 to 0x1000007E
-void GameSettings::OnPlayerChatMessage(GW::HookStatus* status, uint32_t msg_id, void* wParam, void*) {
-    if (msg_id == 0x10000081 && Instance().hide_player_speech_bubbles) {
+void GameSettings::OnPlayerChatMessage(GW::HookStatus* status, GW::UI::UIMessage, void* wParam, void*) {
+    if (Instance().hide_player_speech_bubbles) {
         status->blocked = true;
         PlayerChatMessage* msg = (PlayerChatMessage*)wParam;
         GW::Player* agent = GW::PlayerMgr::GetPlayerByID(msg->player_number);
         if (!agent)
             return;
-        GW::Chat::WriteChatEnc((GW::Chat::Channel)msg->channel, msg->message, agent->name);
+        GW::Chat::WriteChatEnc((GW::Chat::Channel)msg->channel, msg->message, agent->name_enc);
     }
 }
 
-float GameSettings::GetSkillRange(uint32_t skill_id)
+// Hide more than 10 signets of capture
+void GameSettings::OnUpdateSkillCount(GW::HookStatus*, void* packet) {
+    GW::Packet::StoC::UpdateSkillCountAfterMapLoad* pak = (GW::Packet::StoC::UpdateSkillCountAfterMapLoad*)packet;
+    if (Instance().limit_signets_of_capture && static_cast<GW::Constants::SkillID>(pak->skill_id) == GW::Constants::SkillID::Signet_of_Capture) {
+        Instance().actual_signets_of_capture_amount = pak->count;
+        if (pak->count > 10)
+            pak->count = 10;
+    }
+}
+
+// Default colour for agent name tags
+void GameSettings::OnAgentNameTag(GW::HookStatus*, GW::UI::UIMessage msgid, void* wParam, void*) {
+    if (msgid != GW::UI::UIMessage::kShowAgentNameTag && msgid != GW::UI::UIMessage::kSetAgentNameTagAttribs)
+        return;
+    GW::UI::AgentNameTagInfo* tag = (GW::UI::AgentNameTagInfo * )wParam;
+    switch (tag->text_color) {
+    case NAMETAG_COLOR_DEFAULT_NPC: tag->text_color = Instance().nametag_color_npc; break;
+    case NAMETAG_COLOR_DEFAULT_ENEMY: tag->text_color = Instance().nametag_color_enemy; break;
+    case NAMETAG_COLOR_DEFAULT_GADGET: tag->text_color = Instance().nametag_color_gadget; break;
+    case NAMETAG_COLOR_DEFAULT_PLAYER_IN_PARTY: tag->text_color = Instance().nametag_color_player_in_party; break;
+    case NAMETAG_COLOR_DEFAULT_PLAYER_OTHER: tag->text_color = Instance().nametag_color_player_other; break;
+    case NAMETAG_COLOR_DEFAULT_PLAYER_SELF: tag->text_color = Instance().nametag_color_player_self; break;
+    case NAMETAG_COLOR_DEFAULT_ITEM: tag->text_color = Instance().nametag_color_item; break;
+    }
+}
+
+float GameSettings::GetSkillRange(GW::Constants::SkillID skill_id)
 {
-    const auto constant_data = GW::SkillbarMgr::GetSkillConstantData(skill_id);
+    const auto* constant_data = GW::SkillbarMgr::GetSkillConstantData(skill_id);
+    if (!constant_data) return 0.f;
     using T = GW::Constants::SkillType;
     using S = GW::Constants::SkillID;
-    switch (static_cast<T>(constant_data.type)) {
+    switch (static_cast<T>(constant_data->type)) {
         case GW::Constants::SkillType::Hex:
         case GW::Constants::SkillType::Spell:
         case GW::Constants::SkillType::Enchantment:
@@ -2365,7 +3087,7 @@ float GameSettings::GetSkillRange(uint32_t skill_id)
         default:
         return 0.f;
     }
-    switch (static_cast<GW::Constants::SkillID>(constant_data.skill_id)) {
+    switch (static_cast<GW::Constants::SkillID>(constant_data->skill_id)) {
         case S::A_Touch_of_Guile:
         case S::Blackout:
         case S::Blood_Ritual:

@@ -1,13 +1,9 @@
 #include "stdafx.h"
 
-#include <d3dx9_dynamic.h>
-
 #include <GWCA/GameContainers/Array.h>
-
 #include <GWCA/GameEntities/Pathing.h>
 
 #include <GWCA/Managers/MapMgr.h>
-#include <GWCA/Managers/CameraMgr.h>
 
 #include <Widgets/Minimap/D3DVertex.h>
 #include <Widgets/Minimap/PmapRenderer.h>
@@ -46,7 +42,7 @@ void PmapRenderer::Initialize(IDirect3DDevice9* device) {
 
 //#define WIREFRAME_MODE
 
-    GW::PathingMapArray path_map;
+    GW::PathingMapArray* path_map;
     if (GW::Map::GetIsMapLoaded()) {
         path_map = GW::Map::GetPathingMap();
     } else {
@@ -57,7 +53,7 @@ void PmapRenderer::Initialize(IDirect3DDevice9* device) {
 
     // get the number of trapezoids, need it to allocate the vertex buffer
     trapez_count_ = 0;
-    for (const GW::PathingMap& map : path_map) {
+    for (const GW::PathingMap& map : *path_map) {
         trapez_count_ += map.trapezoid_count;
     }
     if (trapez_count_ == 0) return;
@@ -79,7 +75,7 @@ void PmapRenderer::Initialize(IDirect3DDevice9* device) {
     total_vert_count_ = total_tri_count_ * 3;
 
 #endif
-    
+
     D3DVertex* vertices = nullptr;
 
     // allocate new vertex buffer
@@ -123,7 +119,7 @@ void PmapRenderer::Initialize(IDirect3DDevice9* device) {
 
     // populate vertex buffer
     for (auto k = 0; k < (shadow_show ? 2 : 1); ++k) {
-        for (const GW::PathingMap& pmap : path_map) {
+        for (const GW::PathingMap& pmap : *path_map) {
             for (size_t j = 0; j < pmap.trapezoid_count; ++j) {
                 GW::PathingTrapezoid& trap = pmap.trapezoids[j];
 
@@ -160,11 +156,12 @@ void PmapRenderer::Render(IDirect3DDevice9* device) {
     }
 
     if ((color_mapshadow & IM_COL32_A_MASK) > 0) {
-        D3DXMATRIX oldview, translate, newview;
-        D3DXMatrixTranslation(&translate, 0, -100, 0.0f);
+        D3DMATRIX oldview;
         device->GetTransform(D3DTS_VIEW, &oldview);
-        newview = oldview * translate;
-        device->SetTransform(D3DTS_VIEW, &newview);
+        const auto oldMatrix = XMLoadFloat4x4(reinterpret_cast<const DirectX::XMFLOAT4X4*>(&oldview));
+        const auto translate = DirectX::XMMatrixTranslation(0, -100, 0.0f);
+        const auto newview = oldMatrix * translate;
+        device->SetTransform(D3DTS_VIEW, reinterpret_cast<const D3DMATRIX*>(&newview));
 
         device->SetFVF(D3DFVF_CUSTOMVERTEX);
         device->SetStreamSource(0, buffer, 0, sizeof(D3DVertex));

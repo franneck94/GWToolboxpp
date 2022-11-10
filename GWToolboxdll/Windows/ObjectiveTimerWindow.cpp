@@ -2,6 +2,7 @@
 
 #include <Windows/ObjectiveTimerWindow.h>
 #include <Modules/Resources.h>
+#include <Modules/GameSettings.h>
 #include <Widgets/TimerWidget.h>
 
 #include <GWCA/Constants/Constants.h>
@@ -24,7 +25,7 @@
 #include <GWCA/Managers/UIMgr.h>
 
 #include <GWToolbox.h>
-#include <GuiUtils.h>
+#include <Utils/GuiUtils.h>
 #include <Logger.h>
 
 #define countof(arr) (sizeof(arr) / sizeof(arr[0]))
@@ -71,9 +72,9 @@ namespace
     const wchar_t kanaxai_dialog_r10[] = L"\x5339\xA7BA\xC67B\x5D81";
     // Room 11 no dialog
     // Room 12 "So, you have passed through the depths of the Jade Sea, and into the nightmare realm. It is too bad that I must send you back from whence you came."
-    const wchar_t kanaxai_dialog_r12[] = L"\x533A\xED06\x815D\x5FFB"; 
+    const wchar_t kanaxai_dialog_r12[] = L"\x533A\xED06\x815D\x5FFB";
     // Room 13 "I am Kanaxai, creator of nightmares. Let me make yours into reality."
-    const wchar_t kanaxai_dialog_r13[] = L"\x533B\xCAA6\xFDA9\x3277"; 
+    const wchar_t kanaxai_dialog_r13[] = L"\x533B\xCAA6\xFDA9\x3277";
     // Room 14 "I will fill your hearts with visions of horror and despair that will haunt you for all of your days."
     const wchar_t kanaxai_dialog_r14[] = L"\x533C\xDD33\xA330\x4E27";
     // Kanaxai "What gives you the right to enter my lair? I shall kill you for your
@@ -96,7 +97,7 @@ namespace
         // NOTE: Room 8 (failure) to room 10 (scorpion), no door.
         Deep_room_9 = 99887,  // Trigger on leviathan?
         Deep_room_11 = 28961, // Room 11 door is always open. Use to START room 11 when it comes into range.
-    
+
         DoA_foundry_entrance_r1 = 39534,
         DoA_foundry_r1_r2 = 6356,
         DoA_foundry_r2_r3 = 45276,
@@ -107,12 +108,12 @@ namespace
         DoA_city_entrance = 63939,
         DoA_city_wall = 54727,
         DoA_city_jadoth = 64556,
-        DoA_veil_360_left = 13005, 
+        DoA_veil_360_left = 13005,
         DoA_veil_360_middle = 11772,
         DoA_veil_360_right = 28851,
-        DoA_veil_derv = 56510, 
+        DoA_veil_derv = 56510,
         DoA_veil_ranger = 4753,
-        DoA_veil_trench_necro = 46650, 
+        DoA_veil_trench_necro = 46650,
         DoA_veil_trench_mes = 29594,
         DoA_veil_trench_ele = 49742,
         DoA_veil_trench_monk = 55680,
@@ -155,11 +156,27 @@ namespace
     float GetTimestampWidth() { return (65.0f * ImGui::GetIO().FontGlobalScale); }
     float GetLabelWidth()
     {
-        return std::max(GetTimestampWidth(), ImGui::GetWindowContentRegionWidth() - (GetTimestampWidth() * n_columns));
+        return std::max(GetTimestampWidth(), ImGui::GetContentRegionAvail().x - (GetTimestampWidth() * n_columns));
     }
     static bool runs_dirty = false;
+
+    DWORD time_point_ms() {
+        return static_cast<DWORD>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
+    }
 } // namespace
 
+void ObjectiveTimerWindow::CheckIsMapLoaded() {
+    if (!map_load_pending || !InstanceLoadInfo || !InstanceLoadFile || !InstanceTimer)
+        return;
+    map_load_pending = false;
+    if (TimerWidget::Instance().GetStartPoint() != TIME_UNKNOWN && InstanceLoadInfo && InstanceLoadInfo->is_explorable) {
+        AddObjectiveSet((GW::Constants::MapID)InstanceLoadInfo->map_id);
+        Event(EventType::InstanceLoadInfo, InstanceLoadInfo->map_id);
+    }
+    if(InstanceLoadFile && InstanceLoadFile->map_fileID == 219215) {
+        AddDoAObjectiveSet(InstanceLoadFile->spawn_point);
+    }
+}
 void ObjectiveTimerWindow::Initialize()
 {
     ToolboxWindow::Initialize();
@@ -182,17 +199,28 @@ void ObjectiveTimerWindow::Initialize()
     // packet hooks used to create or manipulate objective sets:
     GW::StoC::RegisterPacketCallback<GW::Packet::StoC::PartyDefeated>(
         &PartyDefeated_Entry, [this](GW::HookStatus*, GW::Packet::StoC::PartyDefeated*) { StopObjectives(); });
-    GW::StoC::RegisterPacketCallback<GW::Packet::StoC::InstanceLoadInfo>(&InstanceLoadInfo_Entry,
-        [this](GW::HookStatus*, GW::Packet::StoC::InstanceLoadInfo* packet) { 
-            if (!packet->is_explorable) return;
-            AddObjectiveSet((GW::Constants::MapID)packet->map_id);
-            Event(EventType::InstanceLoadInfo, packet->map_id);
+
+
+    // NB: Server may not send packets in the order we want them
+    // e.g. InstanceLoadInfo comes in before InstanceTimer which means the run start is whacked out
+    // keep track of the packets and only trigger relevent events when the needed packets are in.
+    GW::StoC::RegisterPostPacketCallback<GW::Packet::StoC::InstanceLoadInfo>(&InstanceLoadInfo_Entry,
+        [this](GW::HookStatus*, GW::Packet::StoC::InstanceLoadInfo* packet) {
+            InstanceLoadInfo = new GW::Packet::StoC::InstanceLoadInfo;
+            memcpy(InstanceLoadInfo, packet, sizeof(GW::Packet::StoC::InstanceLoadInfo));
+            CheckIsMapLoaded();
         });
-    GW::StoC::RegisterPacketCallback<GW::Packet::StoC::InstanceLoadFile>(
+    GW::StoC::RegisterPostPacketCallback<GW::Packet::StoC::InstanceLoadFile>(
         &InstanceLoadFile_Entry, [this](GW::HookStatus*, GW::Packet::StoC::InstanceLoadFile* packet) {
-            if (packet->map_fileID == 219215) {
-                AddDoAObjectiveSet(packet->spawn_point);
-            }
+            InstanceLoadFile = new GW::Packet::StoC::InstanceLoadFile;
+            memcpy(InstanceLoadFile, packet, sizeof(GW::Packet::StoC::InstanceLoadFile));
+            CheckIsMapLoaded();
+        });
+    GW::StoC::RegisterPostPacketCallback<GW::Packet::StoC::InstanceTimer>(
+        &InstanceLoadFile_Entry, [this](GW::HookStatus*, GW::Packet::StoC::InstanceTimer* packet) {
+            InstanceTimer = new GW::Packet::StoC::InstanceTimer;
+            memcpy(InstanceTimer, packet, sizeof(GW::Packet::StoC::InstanceTimer));
+            CheckIsMapLoaded();
         });
     GW::StoC::RegisterPacketCallback<GW::Packet::StoC::GameSrvTransfer>(
         &GameSrvTransfer_Entry, [this](GW::HookStatus*, GW::Packet::StoC::GameSrvTransfer* packet) {
@@ -201,7 +229,7 @@ void ObjectiveTimerWindow::Initialize()
             if (!info) return; // we should always have this
 
             static bool in_dungeon = false;
-            bool new_in_dungeon = (info->type == GW::RegionType_Dungeon);
+            bool new_in_dungeon = (info->type == GW::RegionType::Dungeon);
             if (in_dungeon && !new_in_dungeon) { // moved from dungeon to outside
                 StopObjectives();
             } else if (!packet->is_explorable) { // zoning to outpost
@@ -212,10 +240,17 @@ void ObjectiveTimerWindow::Initialize()
             static uint32_t map_id = 0;
             Event(EventType::InstanceEnd, map_id);
             map_id = packet->map_id;
+            // Reset loading map vars (see CheckIsMapLoaded)
+            if (InstanceLoadFile) delete InstanceLoadFile;
+            InstanceLoadFile = 0;
+            if (InstanceLoadInfo) delete InstanceLoadInfo;
+            InstanceLoadInfo = 0;
+            if (InstanceTimer) delete InstanceTimer;
+            InstanceTimer = 0;
+            map_load_pending = true;
         }, -5);
-
     // packet hooks that trigger events:
-    GW::StoC::RegisterPacketCallback<GW::Packet::StoC::MessageServer>(&MessageServer_Entry, 
+    GW::StoC::RegisterPacketCallback<GW::Packet::StoC::MessageServer>(&MessageServer_Entry,
         [this](GW::HookStatus*, GW::Packet::StoC::MessageServer*) {
             const GW::Array<wchar_t>* buff = &GW::GameContext::instance()->world->message_buff;
             if (!buff || !buff->valid() || !buff->size()) return; // Message buffer empty!?
@@ -223,9 +258,9 @@ void ObjectiveTimerWindow::Initialize()
             // NB: buff->size() includes null terminating char. All GW strings are null terminated, use wcslen instead
             Event(EventType::ServerMessage, wcslen(msg), msg);
         });
-    GW::StoC::RegisterPacketCallback<GW::Packet::StoC::DisplayDialogue>(&DisplayDialogue_Entry, 
+    GW::StoC::RegisterPacketCallback<GW::Packet::StoC::DisplayDialogue>(&DisplayDialogue_Entry,
         [this](GW::HookStatus*, GW::Packet::StoC::DisplayDialogue* packet) {
-            // NB: All GW strings are null terminated, use wcslen to avoid having to check all 122 chars 
+            // NB: All GW strings are null terminated, use wcslen to avoid having to check all 122 chars
             Event(EventType::DisplayDialogue, wcslen(packet->message), packet->message);
         });
     GW::StoC::RegisterPacketCallback<GW::Packet::StoC::ManipulateMapObject>(
@@ -261,7 +296,7 @@ void ObjectiveTimerWindow::Initialize()
                 Event(EventType::DoACompleteZone, packet->message[1]);
             }
         });
-    GW::StoC::RegisterPacketCallback(&CountdownStart_Enty, GAME_SMSG_INSTANCE_COUNTDOWN, 
+    GW::StoC::RegisterPacketCallback(&CountdownStart_Enty, GAME_SMSG_INSTANCE_COUNTDOWN,
         [this](GW::HookStatus*, GW::Packet::StoC::PacketBase*) {
             Event(EventType::CountdownStart, (uint32_t)GW::Map::GetMapID());
         });
@@ -294,13 +329,6 @@ void ObjectiveTimerWindow::Initialize()
     return false;
 });*/
 }
-ObjectiveTimerWindow::~ObjectiveTimerWindow()
-{
-    if (run_loader.joinable()) {
-        run_loader.join();
-    }
-    ClearObjectiveSets();
-}
 void ObjectiveTimerWindow::Event(EventType type, uint32_t count, const wchar_t* msg)
 {
     Event(type, count, (uint32_t)msg);
@@ -310,13 +338,13 @@ void ObjectiveTimerWindow::Event(EventType type, uint32_t id1, uint32_t id2)
     if (ObjectiveSet* os = GetCurrentObjectiveSet()) {
 
         os->Event(type, id1, id2);
-        
+
         if (show_debug_events) {
             switch (type) {
                 case EventType::ServerMessage:
                 case EventType::DisplayDialogue: {
                     const wchar_t* msg = (wchar_t*)id2;
-                    Log::Info("Event: %d, %d, %x, %x, %x, %x, %x, %x", type, id1, 
+                    Log::Info("Event: %d, %d, %x, %x, %x, %x, %x, %x", type, id1,
                         msg[0], msg[1], msg[2], msg[3], msg[4], msg[5]);
                 } break;
                 default: Log::Info("Event: %d, %d, %d", type, id1, id2);
@@ -347,78 +375,78 @@ void ObjectiveTimerWindow::AddObjectiveSet(GW::Constants::MapID map_id)
         case MapID::Bogroot_Growths_Level_1:
             AddDungeonObjectiveSet({MapID::Bogroot_Growths_Level_1, MapID::Bogroot_Growths_Level_2});
             break;
-        case MapID::Arachnis_Haunt_Level_1: 
+        case MapID::Arachnis_Haunt_Level_1:
             AddDungeonObjectiveSet({MapID::Arachnis_Haunt_Level_1, MapID::Arachnis_Haunt_Level_2});
             break;
 
             // dungeons - 3 levels:
         case MapID::Catacombs_of_Kathandrax_Level_1:
-            AddDungeonObjectiveSet({MapID::Catacombs_of_Kathandrax_Level_1, 
+            AddDungeonObjectiveSet({MapID::Catacombs_of_Kathandrax_Level_1,
                 MapID::Catacombs_of_Kathandrax_Level_2,
                 MapID::Catacombs_of_Kathandrax_Level_3});
             break;
         case MapID::Rragars_Menagerie_Level_1:
-            AddDungeonObjectiveSet({MapID::Rragars_Menagerie_Level_1, 
-                MapID::Rragars_Menagerie_Level_2, 
+            AddDungeonObjectiveSet({MapID::Rragars_Menagerie_Level_1,
+                MapID::Rragars_Menagerie_Level_2,
                 MapID::Rragars_Menagerie_Level_3});
             break;
         case MapID::Cathedral_of_Flames_Level_1:
-            AddDungeonObjectiveSet({MapID::Cathedral_of_Flames_Level_1, 
+            AddDungeonObjectiveSet({MapID::Cathedral_of_Flames_Level_1,
                 MapID::Cathedral_of_Flames_Level_2,
                 MapID::Catacombs_of_Kathandrax_Level_3});
             break;
         case MapID::Darkrime_Delves_Level_1:
-            AddDungeonObjectiveSet({MapID::Darkrime_Delves_Level_1, 
-                MapID::Darkrime_Delves_Level_2, 
+            AddDungeonObjectiveSet({MapID::Darkrime_Delves_Level_1,
+                MapID::Darkrime_Delves_Level_2,
                 MapID::Darkrime_Delves_Level_3});
             break;
         case MapID::Ravens_Point_Level_1:
-            AddDungeonObjectiveSet({MapID::Ravens_Point_Level_1, 
-                MapID::Ravens_Point_Level_2, 
+            AddDungeonObjectiveSet({MapID::Ravens_Point_Level_1,
+                MapID::Ravens_Point_Level_2,
                 MapID::Ravens_Point_Level_3});
             break;
         case MapID::Vloxen_Excavations_Level_1:
-            AddDungeonObjectiveSet({MapID::Vloxen_Excavations_Level_1, 
+            AddDungeonObjectiveSet({MapID::Vloxen_Excavations_Level_1,
                 MapID::Vloxen_Excavations_Level_2,
                 MapID::Vloxen_Excavations_Level_3});
             break;
         case MapID::Bloodstone_Caves_Level_1:
-            AddDungeonObjectiveSet({MapID::Bloodstone_Caves_Level_1, 
-                MapID::Bloodstone_Caves_Level_2, 
+            AddDungeonObjectiveSet({MapID::Bloodstone_Caves_Level_1,
+                MapID::Bloodstone_Caves_Level_2,
                 MapID::Bloodstone_Caves_Level_3});
             break;
         case MapID::Shards_of_Orr_Level_1:
-            AddDungeonObjectiveSet({MapID::Shards_of_Orr_Level_1, 
-                MapID::Shards_of_Orr_Level_2, 
+            AddDungeonObjectiveSet({MapID::Shards_of_Orr_Level_1,
+                MapID::Shards_of_Orr_Level_2,
                 MapID::Shards_of_Orr_Level_3});
             break;
         case MapID::Oolas_Lab_Level_1:
             AddDungeonObjectiveSet({MapID::Oolas_Lab_Level_1, MapID::Oolas_Lab_Level_2, MapID::Oolas_Lab_Level_3});
             break;
-        case MapID::Heart_of_the_Shiverpeaks_Level_1: 
-            AddDungeonObjectiveSet({MapID::Heart_of_the_Shiverpeaks_Level_1, 
+        case MapID::Heart_of_the_Shiverpeaks_Level_1:
+            AddDungeonObjectiveSet({MapID::Heart_of_the_Shiverpeaks_Level_1,
                 MapID::Heart_of_the_Shiverpeaks_Level_2,
                 MapID::Heart_of_the_Shiverpeaks_Level_3});
             break;
-            
+
             // dungeons - 5 levels:
-        case MapID::Frostmaws_Burrows_Level_1: 
-            AddDungeonObjectiveSet({MapID::Frostmaws_Burrows_Level_1, 
-                MapID::Frostmaws_Burrows_Level_2, 
+        case MapID::Frostmaws_Burrows_Level_1:
+            AddDungeonObjectiveSet({MapID::Frostmaws_Burrows_Level_1,
+                MapID::Frostmaws_Burrows_Level_2,
                 MapID::Frostmaws_Burrows_Level_3,
-                MapID::Frostmaws_Burrows_Level_4, 
+                MapID::Frostmaws_Burrows_Level_4,
                 MapID::Frostmaws_Burrows_Level_5});
             break;
 
             // dungeons - irregular:
-        case MapID::Slavers_Exile_Level_5: 
-            AddDungeonObjectiveSet({MapID::Slavers_Exile_Level_5}); 
+        case MapID::Slavers_Exile_Level_5:
+            AddDungeonObjectiveSet({MapID::Slavers_Exile_Level_5});
             break;
 
             // Others:
         case MapID::The_Underworld_PvP:
             if (const GW::AreaInfo* info = GW::Map::GetCurrentMapInfo()) {
-                if (info->type == GW::RegionType::RegionType_ExplorableZone) {
+                if (info->type == GW::RegionType::ExplorableZone) {
                     AddToPKObjectiveSet();
                 }
             }
@@ -497,7 +525,7 @@ void ObjectiveTimerWindow::AddDoAObjectiveSet(GW::Vec2f spawn)
 
     ObjectiveSet* os = new ObjectiveSet;
     ::AsyncGetMapName(os->name, sizeof(os->name));
-    
+
     std::vector<std::function<void()>> add_doa_obj = {
         [&]() {
             Objective* parent = os->AddObjectiveAfterAll(new Objective("Foundry"))
@@ -547,7 +575,7 @@ void ObjectiveTimerWindow::AddDoAObjectiveSet(GW::Vec2f spawn)
             }
 
             // TODO: jadoth (starts at end of city, ends when chest spawns)
-        }, 
+        },
         [&]() {
             Objective* parent = os->AddObjectiveAfterAll(new Objective("Veil"))
                 ->AddStartEvent(EventType::DoACompleteZone, City)
@@ -567,7 +595,7 @@ void ObjectiveTimerWindow::AddDoAObjectiveSet(GW::Vec2f spawn)
                     ->AddStartEvent(EventType::DoorOpen, DoorID::DoA_veil_trench_mes)
                     ->AddStartEvent(EventType::DoorOpen, DoorID::DoA_veil_trench_necro));
                 parent->AddChild(os->AddObjective(new Objective("Tendrils"), 3)
-                    //->AddStartEvent(EventType::ServerMessage, 4, L"\x8102\x223B\x10A\xB60")
+                    ->AddStartEvent(EventType::DisplayDialogue, 4, L"\x8101\x34C1\x9FA1\xED8F\x1BE4")
                     ->AddEndEvent(EventType::DoACompleteZone, Veil));
             }
         },
@@ -665,14 +693,14 @@ void ObjectiveTimerWindow::AddDeepObjectiveSet()
         ->AddStartEvent(EventType::DoorOpen, DoorID::Deep_room_3_second)
         ->AddStartEvent(EventType::DoorOpen, DoorID::Deep_room_4_first)
         ->AddStartEvent(EventType::DoorOpen, DoorID::Deep_room_4_second);
-    
+
     os->AddObjectiveAfterAll(new Objective("Room 6 | Lethargy"))->AddStartEvent(EventType::DoorOpen, DoorID::Deep_room_5);
     os->AddObjectiveAfterAll(new Objective("Room 7 | Depletion"))->AddStartEvent(EventType::DoorOpen, DoorID::Deep_room_6);
 
     // 8 and 9 together because theres no boundary between
     os->AddObjectiveAfterAll(new Objective("Room 8-9 | Failure/Shadows"))
         ->AddStartEvent(EventType::DoorOpen, DoorID::Deep_room_7);
-    
+
     os->AddObjectiveAfterAll(new Objective("Room 10 | Scorpion"))
         ->AddStartEvent(EventType::DisplayDialogue, 4, kanaxai_dialog_r10);
     os->AddObjectiveAfterAll(new Objective("Room 11 | Fear"))->AddStartEvent(EventType::DoorOpen, DoorID::Deep_room_11);
@@ -680,7 +708,7 @@ void ObjectiveTimerWindow::AddDeepObjectiveSet()
         ->AddStartEvent(EventType::DisplayDialogue, 4, kanaxai_dialog_r12);
     // 13 and 14 together because theres no boundary between
     os->AddObjectiveAfterAll(new Objective("Room 13-14 | Decay/Torment"))
-        ->AddStartEvent(EventType::DisplayDialogue, 4, kanaxai_dialog_r13); 
+        ->AddStartEvent(EventType::DisplayDialogue, 4, kanaxai_dialog_r13);
     os->AddObjectiveAfterAll(new Objective("Room 15 | Kanaxai"))
         ->AddStartEvent(EventType::DisplayDialogue, 4, kanaxai_dialog_r15)
         ->AddEndEvent(EventType::ServerMessage, 6, L"\x6D4D\x0\x0\x0\x0\x2810")
@@ -691,7 +719,7 @@ void ObjectiveTimerWindow::AddFoWObjectiveSet()
 {
     ObjectiveSet* os = new ObjectiveSet;
     ::AsyncGetMapName(os->name, sizeof(os->name));
-    
+
     os->AddQuestObjective("ToC", 309);
     os->AddQuestObjective("Wailing Lord", 310);
     os->AddQuestObjective("Griffons", 311);
@@ -812,25 +840,28 @@ ObjectiveTimerWindow::ObjectiveSet* ObjectiveTimerWindow::GetCurrentObjectiveSet
 
 void ObjectiveTimerWindow::DrawSettingInternal()
 {
-    clear_cached_times = ImGui::Checkbox("Show second decimal", &show_decimal);
-    ImGui::Checkbox("Show 'Start' column", &show_start_column);
-    ImGui::Checkbox("Show 'End' column", &show_end_column);
-    ImGui::Checkbox("Show 'Time' column", &show_time_column);
-    ImGui::Checkbox("Show detailed objectives", &show_detailed_objectives);
+    ImGui::Separator();
+    ImGui::StartSpacedElements(275.f);
+    ImGui::NextSpacedElement(); clear_cached_times = ImGui::Checkbox("Show second decimal", &show_decimal);
+    ImGui::NextSpacedElement(); ImGui::Checkbox("Show 'Start' column", &show_start_column);
+    ImGui::NextSpacedElement(); ImGui::Checkbox("Show 'End' column", &show_end_column);
+    ImGui::NextSpacedElement(); ImGui::Checkbox("Show 'Time' column", &show_time_column);
+    ImGui::NextSpacedElement(); ImGui::Checkbox("Show detailed objectives", &show_detailed_objectives);
     ImGui::ShowHelp("Currently only affects DoA objectives");
-    ImGui::Checkbox("Debug: log events", &show_debug_events);
+    ImGui::NextSpacedElement(); ImGui::Checkbox("Debug: log events", &show_debug_events);
     ImGui::ShowHelp(
         "Will spam your chat with the events used in the objective timer. \nUse for debugging and to ask for more stuff to be added");
-    ImGui::Checkbox("Show run start date/time", &show_start_date_time);
-    ImGui::Checkbox("Show current run in separate window", &show_current_run_window);
+    ImGui::NextSpacedElement(); ImGui::Checkbox("Show run start date/time", &show_start_date_time);
+    ImGui::NextSpacedElement(); ImGui::Checkbox("Show current run in separate window", &show_current_run_window);
+    ImGui::NextSpacedElement();
     if (ImGui::Checkbox("Save/Load runs to disk", &save_to_disk)) {
         SaveRuns();
     }
     ImGui::ShowHelp(
         "Keep a record or your runs in JSON format on disk, and load past runs from disk when starting GWToolbox.");
-    ImGui::Checkbox("Show past runs", &show_past_runs);
+    ImGui::NextSpacedElement(); ImGui::Checkbox("Show past runs", &show_past_runs);
     ImGui::ShowHelp("Display from previous days in the Objective Timer window.");
-    ImGui::Checkbox("Automatic /age on completion", &auto_send_age);
+    ImGui::NextSpacedElement(); ImGui::Checkbox("Automatic /age on completion", &auto_send_age);
     ImGui::ShowHelp(
         "As soon as final objective is complete, send /age command to game server to receive server-side completion time.");
     ComputeNColumns();
@@ -905,7 +936,7 @@ void ObjectiveTimerWindow::LoadRuns()
                     for (nlohmann::json::iterator json_it = os_json_arr.begin(); json_it != os_json_arr.end();
                          ++json_it) {
                         ObjectiveSet* os = ObjectiveSet::FromJson(json_it.value());
-                        if (instance.objective_sets.find(os->system_time) != instance.objective_sets.end()) {
+                        if (instance.objective_sets.contains(os->system_time)) {
                             delete os;
                             continue; // Don't load in a run that already exists
                         }
@@ -950,7 +981,7 @@ void ObjectiveTimerWindow::SaveRuns()
                 file.open(Resources::GetPath(L"runs", it.first));
                 if (file.is_open()) {
                     nlohmann::json os_json_arr;
-                    for (auto os : it.second) {
+                    for (const auto os : it.second) {
                         os_json_arr.push_back(os->ToJson());
                     }
                     file << os_json_arr << std::endl;
@@ -967,7 +998,7 @@ void ObjectiveTimerWindow::SaveRuns()
 }
 void ObjectiveTimerWindow::ClearObjectiveSets()
 {
-    for (auto& os : objective_sets) {
+    for (const auto& os : objective_sets) {
         delete os.second;
     }
     objective_sets.clear();
@@ -1020,7 +1051,8 @@ ObjectiveTimerWindow::Objective* ObjectiveTimerWindow::Objective::SetStarted()
 {
     if (IsStarted())
         return this;
-    start = TimerWidget::Instance().GetTimerMs();
+    start_time_point = time_point_ms(); // run_started_time_point
+    start = start_time_point - parent->run_start_time_point; // Ms since run start
     PrintTime(cached_start, sizeof(cached_start), start);
     status = Status::Started;
     return this;
@@ -1030,7 +1062,9 @@ ObjectiveTimerWindow::Objective* ObjectiveTimerWindow::Objective::SetDone()
     if (status == Status::Completed)
         return this;
     if (done == TIME_UNKNOWN) {
-        done = TimerWidget::Instance().GetTimerMs();
+        done_time_point = time_point_ms();
+        // NB: Objective may not have triggered a start point.
+        done = done_time_point - parent->run_start_time_point;
     }
     PrintTime(cached_done, sizeof(cached_done), done);
 
@@ -1084,7 +1118,7 @@ DWORD ObjectiveTimerWindow::Objective::GetDuration() {
     switch (status) {
     case Status::Started:
         ASSERT(start != TIME_UNKNOWN);
-        return duration = TimerWidget::Instance().GetTimerMs() - start;
+        return duration = time_point_ms() - start_time_point;
     case Status::Completed:
         ASSERT(done != TIME_UNKNOWN);
         // NB: An objective can be flagged as completed without being started if a following objective has been started.
@@ -1112,7 +1146,7 @@ void ObjectiveTimerWindow::Objective::Draw()
         case ObjectiveTimerWindow::Objective::Status::Failed:
             ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.0f, 0.0f, 1.0f));
             break;
-        default: 
+        default:
             ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
             break;
     }
@@ -1182,7 +1216,7 @@ void ObjectiveTimerWindow::ObjectiveSet::Event(EventType type, uint32_t id1, uin
                 return true;
             }
 
-            default: 
+            default:
                 if (id1 != 0 && id1 != event.id1) return false;
                 if (id2 != 0 && id2 != event.id2) return false;
                 return true;
@@ -1208,7 +1242,7 @@ void ObjectiveTimerWindow::ObjectiveSet::Event(EventType type, uint32_t id1, uin
                         if (!other->IsDone()) other->SetDone();
                     }
                     break;
-                }  
+                }
             }
         }
 
@@ -1235,20 +1269,17 @@ void ObjectiveTimerWindow::ObjectiveSet::Event(EventType type, uint32_t id1, uin
 }
 void ObjectiveTimerWindow::ObjectiveSet::CheckSetDone()
 {
-    bool done = true;
-    for (Objective* obj : objectives) {
-        if (obj->done == TIME_UNKNOWN) {
-            done = false;
-            break;
-        }
-    }
-    if (done) {
+    if (!std::ranges::any_of(objectives, [](const Objective* obj) { return obj->done == TIME_UNKNOWN; })) {
         duration = GetDuration();
+        // make sure there isn't an objective finishing later
+        const auto max = std::max_element(objectives.begin(), objectives.end(),
+            [](const Objective* a, const Objective* b) { return a->done < b->done; });
+        duration = std::max((*max)->done, duration);
         active = false;
-        if (ObjectiveTimerWindow::Instance().auto_send_age) {
+        if (Instance().auto_send_age) {
             GW::Chat::SendChat('/', "age");
         }
-        TimerWidget::Instance().SetRunCompleted();
+        TimerWidget::Instance().SetRunCompleted(GameSettings::Instance().auto_age2_on_age);
     }
 }
 
@@ -1256,7 +1287,7 @@ ObjectiveTimerWindow::ObjectiveSet::ObjectiveSet()
     : ui_id(cur_ui_id++)
 {
     system_time = static_cast<DWORD>(time(NULL));
-    instance_time = TimerWidget::Instance().GetTimerMs();
+    run_start_time_point = TimerWidget::Instance().GetStartPoint() != TIME_UNKNOWN ? TimerWidget::Instance().GetStartPoint() : time_point_ms();
     duration = TIME_UNKNOWN;
 }
 ObjectiveTimerWindow::ObjectiveSet::~ObjectiveSet() {
@@ -1273,7 +1304,7 @@ ObjectiveTimerWindow::ObjectiveSet* ObjectiveTimerWindow::ObjectiveSet::FromJson
     os->system_time = json.at("utc_start").get<DWORD>();
     std::string name = json.at("name").get<std::string>();
     snprintf(os->name, sizeof(os->name), "%s", name.c_str());
-    os->instance_time = json.at("instance_start").get<DWORD>();
+    os->run_start_time_point = json.at("instance_start").get<DWORD>();
     if(json.contains("duration"))
         os->duration = json.at("duration").get<DWORD>();
     nlohmann::json json_objs = json.at("objectives");
@@ -1289,7 +1320,7 @@ nlohmann::json ObjectiveTimerWindow::ObjectiveSet::ToJson()
 {
     nlohmann::json json;
     json["name"] = name;
-    json["instance_start"] = instance_time;
+    json["instance_start"] = run_start_time_point;
     json["utc_start"] = system_time;
     nlohmann::json json_objectives;
     for (auto* obj : objectives) {
@@ -1331,7 +1362,7 @@ const char* ObjectiveTimerWindow::ObjectiveSet::GetStartTimeStr() {
         struct tm* nowinfo = localtime(&now);
         int cached_str_offset = 0;
         if (timeinfo.tm_yday != nowinfo->tm_yday || timeinfo.tm_year != nowinfo->tm_year) {
-            char* months[] = { "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec" };
+            const char* months[] = { "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec" };
             cached_str_offset += snprintf(&cached_start[cached_str_offset], sizeof(cached_start) - cached_str_offset,
                 "%s %02d, ", months[timeinfo.tm_mon], timeinfo.tm_mday);
         }
@@ -1343,23 +1374,17 @@ const char* ObjectiveTimerWindow::ObjectiveSet::GetStartTimeStr() {
 }
 DWORD ObjectiveTimerWindow::ObjectiveSet::GetDuration() {
     if (active) {
-        DWORD now = TimerWidget::Instance().GetTimerMs();
-        return duration = now - instance_time;
+        return duration = time_point_ms() - run_start_time_point;
     }
     if (duration != TIME_UNKNOWN) {
         return duration;
     }
     // Recent obj timer update didn't save run duration to disk. For failed runs we can't find duration...
-    if (!objectives.size() || !objectives.back()->IsDone()) {
+    if (objectives.empty() || !objectives.back()->IsDone()) {
         return TIME_UNKNOWN;
     }
     // ... but for completed runs, we can figure this out from the objectives.
-    for (auto* obj : objectives) {
-        if (!obj->IsStarted())
-            continue;
-        return duration = objectives.back()->done - obj->start;
-    }
-    return TIME_UNKNOWN;
+    return objectives.back()->done;
 }
 const char* ObjectiveTimerWindow::ObjectiveSet::GetDurationStr() {
     if (!cached_time[0] || active) {
@@ -1385,7 +1410,7 @@ bool ObjectiveTimerWindow::ObjectiveSet::Draw()
     else {
         sprintf(buf, "%s - %s%s###header%u", name, GetDurationStr(), failed ? " [Failed]" : "", ui_id);
     }
-    
+
 
     bool is_open = true;
     bool is_collapsed = !ImGui::CollapsingHeader(buf, &is_open, ImGuiTreeNodeFlags_DefaultOpen);

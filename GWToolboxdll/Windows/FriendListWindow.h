@@ -2,6 +2,7 @@
 
 #include <GWCA/Utilities/Hook.h>
 #include <GWCA/Constants/Constants.h>
+#include <GWCA/Packets/StoC.h>
 
 #include <GWCA/GameEntities/Friendslist.h>
 #include <GWCA/GameEntities/Map.h>
@@ -11,13 +12,19 @@
 #include <GWCA/Managers/ChatMgr.h>
 
 #include <Color.h>
-#include <GuiUtils.h>
+#include <Utils/GuiUtils.h>
 #include <ToolboxWindow.h>
 
 class FriendListWindow : public ToolboxWindow {
-private:
-    FriendListWindow();
-    ~FriendListWindow();
+    FriendListWindow() {
+        inifile = new CSimpleIni(false, false, false);
+    }
+    ~FriendListWindow() {
+        if (settings_thread.joinable())
+            settings_thread.join();
+        delete inifile;
+    }
+
     std::thread settings_thread;
     // Structs because we don't case about public or private; this whole struct is private to this module anyway.
     struct Character {
@@ -39,24 +46,23 @@ private:
         std::wstring alias;
         FriendListWindow* parent;
         Character* current_char = nullptr;
-        char current_map_name[128] = { 0 };
+        GuiUtils::EncString current_map_name;
         uint32_t current_map_id = 0;
         std::unordered_map<std::wstring, Character> characters;
-        uint8_t status = static_cast<uint8_t>(GW::FriendStatus::FriendStatus_Offline); // 0 = Offline, 1 = Online, 2 = Do not disturb, 3 = Away
-        uint8_t type = static_cast<uint8_t>(GW::FriendType::FriendType_Unknow);
+        GW::FriendStatus status = GW::FriendStatus::Offline;
+        GW::FriendType type = GW::FriendType::Unknow;
         clock_t last_update = 0;
         std::string cached_charnames_hover_str;
         bool cached_charnames_hover = false;
         Character* GetCharacter(const wchar_t*);
         Character* SetCharacter(const wchar_t*, uint8_t);
         GW::Friend* GetFriend();
-        void GetMapName();
         const std::string GetCharactersHover(bool include_charname = false);
         void StartWhisper();
         bool RemoveGWFriend();
         bool ValidUuid();
         const bool IsOffline() {
-            return status < GW::FriendStatus::FriendStatus_Online || status > GW::FriendStatus::FriendStatus_Away;
+            return status == GW::FriendStatus::Offline;
         };
         const bool NeedToUpdate(clock_t now) {
             return (now - last_update) > 10000; // 10 Second stale.
@@ -72,20 +78,24 @@ private:
 
     bool RemoveFriend(Friend* f);
     void LoadCharnames(const char* section, std::unordered_map<std::wstring, uint8_t>* out);
+
+    std::unordered_map<uint32_t,bool> ignored_parties{};
+    bool ignore_trade = false;
 public:
     static FriendListWindow& Instance() {
         static FriendListWindow instance;
         return instance;
     }
     // Encoded message types as received via encoded chat message
-    enum MessageType : wchar_t {
+    enum class MessageType : wchar_t {
         CANNOT_ADD_YOURSELF_AS_A_FRIEND = 0x2f3,
         EXCEEDED_MAX_NUMBER_OF_FRIENDS,
         CHARACTER_NAME_X_DOES_NOT_EXIST,
         FRIEND_ALREADY_ADDED_AS_X,
         INCOMING_WHISPER = 0x76d,
         OUTGOING_WHISPER,
-        PLAYER_X_NOT_ONLINE = 0x881
+        PLAYER_NAME_IS_INVALID = 0x880,
+        PLAYER_X_NOT_ONLINE
     };
     bool WriteError(MessageType message_type, const wchar_t* character_name);
 
@@ -97,13 +107,21 @@ public:
     static void OnPlayerNotOnline(GW::HookStatus *status, wchar_t *message);
     static void OnFriendUpdated(GW::HookStatus*, GW::Friend* f, GW::FriendStatus status, const wchar_t* alias, const wchar_t* charname);
     static void OnAddFriendError(GW::HookStatus* status, wchar_t* message);
-    static void OnUIMessage(GW::HookStatus* status, uint32_t message_id, void* wparam, void*);
+    static void OnUIMessage(GW::HookStatus*, GW::UI::UIMessage , void*, void*);
     static void OnPrintChat(GW::HookStatus*, GW::Chat::Channel channel, wchar_t** message_ptr, FILETIME, int);
+    static void OnChatMessage(GW::HookStatus* status, GW::Packet::StoC::PacketBase* packet);
+    // Ignore party invitations from players on my ignore list
 
+    static bool GetIsPlayerIgnored(GW::Packet::StoC::PacketBase* pak);
+    static bool GetIsPlayerIgnored(uint32_t player_id);
+    static bool GetIsPlayerIgnored(const std::wstring& player_name);
+
+    static void OnPostPartyInvite(GW::HookStatus* status, GW::Packet::StoC::PartyInviteReceived_Create* pak);
+    static void OnPostTradePacket(GW::HookStatus* status, GW::Packet::StoC::TradeStart* pak);
     static void AddFriendAliasToMessage(wchar_t** message_ptr);
 
     const char* Name() const override { return "Friend List"; }
-    const char* Icon() const override { return ICON_FA_USER_FRIENDS; }
+    const char8_t* Icon() const override { return ICON_FA_USER_FRIENDS; }
 
     bool IsWidget() const override;
     bool IsWindow() const override;
@@ -117,7 +135,7 @@ public:
     void Terminate() override;
     void DrawHelp() override;
     void RegisterSettingsContent() override;
-    ImGuiWindowFlags GetWinFlags(ImGuiWindowFlags flags=0) const;
+    ImGuiWindowFlags GetWinFlags(ImGuiWindowFlags flags=0) const override;
 
     // Update. Will always be called every frame.
     void Update(float delta) override;
@@ -138,7 +156,7 @@ public:
 
 private:
     CSimpleIni* inifile = nullptr;
-    wchar_t* ini_filename = L"friends.ini";
+    const wchar_t* ini_filename = L"friends.ini";
     bool loading = false; // Loading from disk?
     bool polling = false; // Polling in progress?
     bool poll_queued = false; // Used to avoid overloading the thread queue.
@@ -176,16 +194,18 @@ private:
     bool lock_size_as_widget = true;
 
     Color hover_background_color = 0x33999999;
+    bool friend_name_tag_enabled = false;
+    Color friend_name_tag_color = 0xff6060ff;
 
     clock_t friends_list_checked = 0;
 
     uint8_t poll_interval_seconds = 10;
 
     // Mapping of Name > UUID
-    std::unordered_map<std::wstring, std::string> uuid_by_name;
+    std::unordered_map<std::wstring, std::string> uuid_by_name{};
 
     // Main store of Friend info
-    std::unordered_map<std::string, Friend*> friends;
+    std::unordered_map<std::string, Friend*> friends{};
 
     bool show_location = true;
 

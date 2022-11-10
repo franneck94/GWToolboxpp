@@ -7,9 +7,12 @@
 #include <Utils/RateLimiter.h>
 
 class PartySearchWindow : public ToolboxWindow {
-    PartySearchWindow() {};
+    PartySearchWindow() = default;
     PartySearchWindow(const PartySearchWindow&) = delete;
-    ~PartySearchWindow();
+    ~PartySearchWindow() {
+        ClearParties();
+    }
+
 public:
     static PartySearchWindow& Instance() {
         static PartySearchWindow instance;
@@ -17,7 +20,7 @@ public:
     }
 
     const char* Name() const override { return "Party Search"; }
-    const char* Icon() const override { return ICON_FA_PEOPLE_ARROWS; }
+    const char8_t* Icon() const override { return ICON_FA_PEOPLE_ARROWS; }
 
     void Initialize() override;
 
@@ -90,17 +93,17 @@ private:
     clock_t refresh_parties = 0;
     bool display_party_types[6] = { true, true, true, false, true, true };
     // Internal - mainly to hide Trade channel from the UI and networking
-    bool ignore_party_types[6] = { false, false, false, true, false, false };
+    bool ignore_party_types[6] = { false, false, false, false, false, false };
     uint32_t max_party_size = 0;
 
     easywsclient::WebSocket* ws_window = NULL;
     RateLimiter window_rate_limiter;
-    
+
     CircularBuffer<Message> messages;
 
     TBParty* GetParty(uint32_t party_id, wchar_t** leader_out = nullptr);
     TBParty* GetPartyByName(std::wstring leader);
-    
+
     void ClearParties();
     void FillParties();
     void DrawAlertsWindowContent(bool ownwindow);

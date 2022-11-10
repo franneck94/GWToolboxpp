@@ -2,7 +2,6 @@
 
 #include <GWCA/GameEntities/Party.h>
 
-#include <Defines.h>
 #include <ToolboxWidget.h>
 
 #include <Widgets/Minimap/AgentRenderer.h>
@@ -12,7 +11,6 @@
 #include <Widgets/Minimap/PmapRenderer.h>
 #include <Widgets/Minimap/RangeRenderer.h>
 #include <Widgets/Minimap/SymbolsRenderer.h>
-#include <Widgets/Minimap/VBuffer.h>
 
 class Minimap final : public ToolboxWidget
 {
@@ -23,19 +21,16 @@ class Minimap final : public ToolboxWidget
             , y(_y)
         {
         }
-        Vec2i()
-            : x(0)
-            , y(0)
-        {
-        }
-        int x, y;
+        Vec2i() = default;
+        int x = 0;
+        int y = 0;
     };
     Minimap()
     {
         is_resizable = false;
     };
     Minimap(const Minimap &) = delete;
-    ~Minimap(){};
+    ~Minimap() = default;
 
 public:
     static Minimap &Instance()
@@ -58,7 +53,7 @@ public:
     const float max_speed = 15.0f; // game units per frame
 
     const char* Name() const override { return "Minimap"; }
-    const char* Icon() const override { return ICON_FA_MAP_MARKED_ALT; }
+    const char8_t* Icon() const override { return ICON_FA_MAP_MARKED_ALT; }
 
     float Scale() const { return scale; }
 
@@ -82,11 +77,8 @@ public:
     void DrawSettingInternal() override;
 
     float GetMapRotation() const;
-    D3DXVECTOR2 GetGwinchScale() const;
+    DirectX::XMFLOAT2 GetGwinchScale() const;
     GW::Vec2f ShadowstepLocation() const;
-
-    static void SkillActivateCallback(GW::HookStatus*,GW::Packet::StoC::SkillActivate*);
-
 
     // 0 is 'all' flag, 1 to 7 is each hero
     bool FlagHero(uint32_t idx);
@@ -113,11 +105,12 @@ private:
     bool IsKeyDown(MinimapModifierBehaviour mmb) const;
 
     bool mousedown = false;
-    bool reverse_camera = false;
+    bool camera_currently_reversed = false;
 
     Vec2i location;
     Vec2i size;
-    D3DXVECTOR2 gwinch_scale;
+    bool snap_to_compass = false;
+
     GW::Vec2f shadowstep_location = {0.f, 0.f};
     RECT clipping = { 0 };
 
@@ -130,8 +123,9 @@ private:
 
     bool loading = false; // only consider some cases but still good
 
-    bool mouse_clickthrough = false;
+    bool mouse_clickthrough_in_explorable = false;
     bool mouse_clickthrough_in_outpost = false;
+    bool flip_on_reverse = false;
     bool rotate_minimap = true;
     bool smooth_rotation = true;
     bool circular_map = true;
@@ -144,9 +138,9 @@ private:
     bool hero_flag_controls_show = false;
     bool hero_flag_window_attach = true;
     Color hero_flag_window_background = 0;
-    std::vector<GW::AgentID> player_heroes;
+    std::vector<GW::AgentID> player_heroes{};
 
-    size_t Minimap::GetPlayerHeroes(const GW::PartyInfo* party, std::vector<GW::AgentID>& _player_heroes, bool* has_flags = nullptr);
+    size_t GetPlayerHeroes(const GW::PartyInfo* party, std::vector<GW::AgentID>& _player_heroes, bool* has_flags = nullptr);
 
     GW::HookEntry AgentPinged_Entry;
     GW::HookEntry CompassEvent_Entry;
@@ -156,4 +150,5 @@ private:
     GW::HookEntry InstanceLoadInfo_Entry;
     GW::HookEntry GameSrvTransfer_Entry;
     GW::HookEntry UIMsg_Entry;
+    static void OnUIMessage(GW::HookStatus*, GW::UI::UIMessage, void*, void*);
 };

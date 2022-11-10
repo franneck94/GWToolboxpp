@@ -1,7 +1,7 @@
-/*   
+/*
     Module to keep track of current Teamspeak 3 status
 
-    Created it initially because I was pissed off with having to bind 
+    Created it initially because I was pissed off with having to bind
     different hotkeys to send different TS3 servers to chat.
 
     Enhancements:
@@ -25,7 +25,7 @@
 #include <GWCA\Managers\ChatMgr.h>
 #include <GWCA\Managers\StoCMgr.h>
 
-#include <GuiUtils.h>
+#include <Utils/GuiUtils.h>
 #include <ImGuiAddons.h>
 
 #include <Modules/Resources.h>
@@ -34,7 +34,7 @@
 namespace {
     const char* ws_host = "ws://localhost:27032";
     std::thread connector;
-    static UINT WM_TEAMSPEAK3_JSON_API_STARTED = 0;
+    UINT WM_TEAMSPEAK3_JSON_API_STARTED = 0;
 }
 using easywsclient::WebSocket;
 using nlohmann::json;
@@ -112,7 +112,7 @@ bool TeamspeakModule::Connect(bool user_invoked) {
     }
     std::filesystem::path settings_folder = GetTeamspeakSettingsFolderPath() / "plugins";
     if (!std::filesystem::exists(settings_folder)) {
-        if(user_invoked) 
+        if(user_invoked)
             Log::Error("Failed to find TS3Client setting folder; is Teamspeak 3 installed?");
         step = Idle;
         return false;
@@ -160,7 +160,7 @@ bool TeamspeakModule::Connect(bool user_invoked) {
                 Log::Info("Teamspeak 3 plugin connected");
         }
         step = Idle;
-        pending_connect = false;        
+        pending_connect = false;
         });
     return true;
 }
@@ -196,7 +196,7 @@ void TeamspeakModule::Update(float) {
         }
         websocket->dispatch(OnWebsocketMessage);
     }
-    
+
 }
 std::filesystem::path TeamspeakModule::GetTeamspeakSettingsFolderPath()
 {
@@ -235,8 +235,9 @@ bool TeamspeakModule::GetTeamspeakProcess(std::filesystem::path* filename, PBOOL
             Log::Log("Failed to call QueryFullProcessImageNameW on PID %d (%04X)\n", aProcesses[i], GetLastError());
             continue;
         }
-        if (StrStrW(szProcessName, L"ts3client_win64.exe") == NULL
-            && StrStrW(szProcessName, L"ts3client_win32.exe") == NULL) {
+        std::wstring processNameWs(szProcessName);
+        if (processNameWs.find(L"ts3client_win64.exe") == std::wstring::npos
+            && processNameWs.find(L"ts3client_win32.exe") == std::wstring::npos) {
             CloseHandle(hProcess);
             continue; // This is not the droid you're looking for...
         }
@@ -254,7 +255,7 @@ bool TeamspeakModule::GetTeamspeakProcess(std::filesystem::path* filename, PBOOL
             }
             else {
                 // 32 bit process on 64 bit OS. Sorry for confusing var name.
-                *is_x64 = !*is_x64;
+                *is_x64 = *is_x64 ? 0 : 1;
             }
         }
         // NB: We COULD now traverse the modules for the process to see if the TS3 DLL is loaded.
@@ -316,17 +317,20 @@ void TeamspeakModule::DrawSettingInternal() {
 }
 bool TeamspeakModule::GetLatestRelease(PluginRelease* release, bool is_x64) {
     // Get list of releases
-    std::string releases_str = "";
+    std::string response;
     unsigned int tries = 0;
-    while (tries < 5 && releases_str.empty()) {
-        releases_str = Resources::Instance().Download(L"https://api.github.com/repos/3vcloud/Teamspeak3_WinAPI/releases");
+    const char* url = "https://api.github.com/repos/3vcloud/Teamspeak3_WinAPI/releases";
+    bool success = false;
+    do {
+        success = Resources::Instance().Download(url, response);
         tries++;
-    }
-    if (releases_str.empty()) {
+    } while (!success && tries < 5);
+    if (!success) {
+        Log::Log("Failed to download %s\n%s", url, response.c_str());
         return false;
     }
     using Json = nlohmann::json;
-    Json json = Json::parse(releases_str.c_str(), nullptr, false);
+    Json json = Json::parse(response.c_str(), nullptr, false);
     if (json == Json::value_t::discarded || !json.is_array() || !json.size())
         return false;
     for (unsigned int i = 0; i < json.size(); i++) {
@@ -370,16 +374,21 @@ void TeamspeakModule::DownloadPlugin(bool user_invoked, bool is_x64, const std::
             instance.pending_connect = false;
             return;
         }
-        Resources::Instance().Download(download_to, GuiUtils::StringToWString(release.download_url),
-            [user_invoked](bool success) -> void {
+        Resources::Instance().Download(download_to, release.download_url,
+            [user_invoked](bool success, const std::wstring& error) -> void {
                 auto& instance = Instance();
                 if (success) {
                     instance.step = Idle;
                     instance.Connect(user_invoked);
                 }
                 else {
-                    if (user_invoked)
-                        Log::Error("Updated error - cannot download teamspeak plugin dll");
+                    if (user_invoked) {
+                        Log::ErrorW(L"Updated error - cannot download teamspeak plugin dll\n%s", error.c_str());
+                    }
+                    else {
+                        Log::LogW(L"Updated error - cannot download teamspeak plugin dll\n%s", error.c_str());
+                    }
+
                     instance.step = Idle;
                 }
             });
