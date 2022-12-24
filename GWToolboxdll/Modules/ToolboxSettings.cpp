@@ -50,12 +50,14 @@
 #include <Windows/ObjectiveTimerWindow.h>
 #include <Windows/FactionLeaderboardWindow.h>
 #include <Windows/DailyQuestsWindow.h>
+#include <Windows/DialogsWindow.h>
 #include <Windows/FriendListWindow.h>
 #include <Windows/ObserverPlayerWindow.h>
 #include <Windows/ObserverTargetWindow.h>
 #include <Windows/ObserverPartyWindow.h>
 #include <Windows/ObserverExportWindow.h>
 #include <Windows/CompletionWindow.h>
+#include <Windows/DialogsWindow.h>
 #ifdef _DEBUG
 #include <Windows/PacketLoggerWindow.h>
 #include <Windows/DoorMonitorWindow.h>
@@ -160,6 +162,7 @@ namespace {
         ObserverExportWindow::Instance(),
         
         CompletionWindow::Instance(),
+        DialogsWindow::Instance(),
         RerollWindow::Instance(),
         PartyStatisticsWindow::Instance()
     };
@@ -382,4 +385,3 @@ void ToolboxSettings::Update(float delta) {
         }
     }
 }
-
