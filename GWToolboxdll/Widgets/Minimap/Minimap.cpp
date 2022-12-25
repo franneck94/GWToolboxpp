@@ -975,8 +975,6 @@ void Minimap::SelectTarget(const GW::Vec2f pos) const
             continue;
         if (agent->GetIsItemType())
             continue;
-        if (agent->GetIsGadgetType())
-            continue; // allow locked chests
         const float newDistance = GW::GetSquareDistance(pos, agent->pos);
         if (distance > newDistance) {
             distance = newDistance;
