@@ -91,7 +91,6 @@ private:
     bool use_latency_widget = true;
     bool use_skill_monitor = true;
     bool use_plugins = true;
-    bool use_toast_notifications = true;
     bool use_chat_log = true;
     bool use_mouse_fix = true;
     bool use_hints = true;
