@@ -30,9 +30,7 @@
 #include <Modules/HintsModule.h>
 #include <Modules/PluginModule.h>
 #include <Modules/KeyboardLanguageFix.h>
-#if 0
-#include <Modules/GWFileRequester.h>
-#endif
+#include <Windows/DialogsWindow.h>
 #include <Modules/HallOfMonumentsModule.h>
 #include <Modules/ToastNotifications.h>
 #include <Modules/LoginModule.h>
@@ -167,6 +165,7 @@ namespace {
         ObserverExportWindow::Instance(),
 
         CompletionWindow::Instance(),
+        DialogsWindow::Instance(),
         RerollWindow::Instance(),
         PartyStatisticsWindow::Instance(),
         DupingWindow::Instance(),
@@ -399,4 +398,3 @@ void ToolboxSettings::Update(float delta) {
         }
     }
 }
-
