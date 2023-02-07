@@ -1,5 +1,7 @@
 #include "stdafx.h"
 
+#include "imgui.h"
+
 #include <GWCA/Constants/Constants.h>
 #include <GWCA/Constants/QuestIDs.h>
 #include <GWCA/Managers/AgentMgr.h>
@@ -45,6 +47,16 @@ namespace {
     "DoA - Foundry 1: Foundry Of Failed Creations",
     "DoA - Foundry 2: Foundry Breakout"
     };
+
+    std::map<const char*, std::vector<int>> dialogs_by_name = {{"Craft fow armor", {GW::Constants::DialogID::FowCraftArmor}}, {"Prof Change - Warrior", {GW::Constants::DialogID::ProfChangeWarrior + 1, GW::Constants::DialogID::ProfChangeWarrior}},
+        {"Prof Change - Ranger", {GW::Constants::DialogID::ProfChangeRanger + 1, GW::Constants::DialogID::ProfChangeRanger}}, {"Prof Change - Monk", {GW::Constants::DialogID::ProfChangeMonk + 1, GW::Constants::DialogID::ProfChangeMonk}},
+        {"Prof Change - Necro", {GW::Constants::DialogID::ProfChangeNecro + 1, GW::Constants::DialogID::ProfChangeNecro}}, {"Prof Change - Mesmer", {GW::Constants::DialogID::ProfChangeMesmer + 1, GW::Constants::DialogID::ProfChangeMesmer}},
+        {"Prof Change - Elementalist", {GW::Constants::DialogID::ProfChangeEle + 1, GW::Constants::DialogID::ProfChangeEle}}, {"Prof Change - Assassin", {GW::Constants::DialogID::ProfChangeAssassin + 1, GW::Constants::DialogID::ProfChangeAssassin}},
+        {"Prof Change - Ritualist", {GW::Constants::DialogID::ProfChangeRitualist + 1, GW::Constants::DialogID::ProfChangeRitualist}}, {"Prof Change - Paragon", {GW::Constants::DialogID::ProfChangeParagon + 1, GW::Constants::DialogID::ProfChangeParagon}},
+        {"Prof Change - Dervish", {GW::Constants::DialogID::ProfChangeDervish + 1, GW::Constants::DialogID::ProfChangeDervish}}, {"Kama -> Docks @ Hahnna", {GW::Constants::DialogID::FerryKamadanToDocks}},
+        {"Docks -> Kaineng @ Mhenlo", {GW::Constants::DialogID::FerryDocksToKaineng}}, {"Docks -> LA Gate @ Mhenlo", {GW::Constants::DialogID::FerryDocksToLA}}, {"LA Gate -> LA @ Neiro", {GW::Constants::DialogID::FerryGateToLA}},
+        {"Faction mission outpost", {GW::Constants::DialogID::FactionMissionOutpost}}, {"Nightfall mission outpost", {GW::Constants::DialogID::NightfallMissionOutpost}}};
+
 
     int fav_count = 0;
     std::vector<int> fav_index{};
@@ -165,6 +177,27 @@ void DialogsWindow::Draw(IDirect3DDevice9* pDevice) {
             ImGui::Separator();
         }
         if (show_custom) {
+            static int dialogindex = 0;
+            ImGui::PushItemWidth(-60.0f - ImGui::GetStyle().ItemInnerSpacing.x);
+            const auto current = std::next(dialogs_by_name.begin(), dialogindex);
+            if (ImGui::BeginCombo("###dialogcombo", current->first)) {
+                int offset = 0;
+                for (auto it = dialogs_by_name.begin(); it != dialogs_by_name.end(); it++) {
+                    if (ImGui::Selectable(it->first, it == current)) {
+                        dialogindex = offset;
+                        break;
+                    }
+                    offset++;5
+                }
+                ImGui::EndCombo();
+            }
+            ImGui::PopItemWidth();
+            ImGui::SameLine(0, ImGui::GetStyle().ItemInnerSpacing.x);
+            if (ImGui::Button("Send##1", ImVec2(60.0f, 0))) {
+                for (const auto dialog_id : current->second) {
+                    GW::Agents::SendDialog(dialog_id);
+                }
+            }
 
             ImGui::PushItemWidth(-60.0f - ImGui::GetStyle().ItemInnerSpacing.x);
             ImGui::InputText("###dialoginput", customdialogbuf, _countof(customdialogbuf), ImGuiInputTextFlags_None);
@@ -175,7 +208,7 @@ void DialogsWindow::Draw(IDirect3DDevice9* pDevice) {
             ImGui::SameLine(0, ImGui::GetStyle().ItemInnerSpacing.x);
             if (ImGui::Button("Send##2", ImVec2(60.0f, 0))) {
                 char buf[32];
-                ASSERT(snprintf(buf, _countof(buf), "dialog %s",customdialogbuf) != -1);
+                ASSERT(snprintf(buf, _countof(buf), "dialog %s", customdialogbuf) != -1);
                 GW::Chat::SendChat('/', buf);
             }
         }

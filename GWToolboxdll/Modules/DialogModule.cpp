@@ -300,7 +300,7 @@ uint32_t DialogModule::AcceptFirstAvailableQuest() {
         }
     }
     for (const auto quest_id : available_quests) {
-        if (quest_id == static_cast<uint32_t>(GW::Constants::QuestID::UW_UWG) 
+        if (quest_id == static_cast<uint32_t>(GW::Constants::QuestID::UW_UWG)
             && available_quests.size() > 1) {
             // skip unless it's the only available dialog - certain quests almost always want to be taken last
             continue;
