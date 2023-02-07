@@ -67,6 +67,7 @@
 #endif
 #include <Windows/RerollWindow.h>
 #include <Windows/ArmoryWindow.h>
+#include <Windows/DialogsWindow.h>
 
 #include <Widgets/TimerWidget.h>
 #include <Widgets/HealthWidget.h>
@@ -167,6 +168,7 @@ namespace {
         ObserverExportWindow::Instance(),
 
         CompletionWindow::Instance(),
+        DialogsWindow::Instance(),
         RerollWindow::Instance(),
         PartyStatisticsWindow::Instance(),
         DupingWindow::Instance(),
@@ -241,7 +243,7 @@ void ToolboxSettings::DrawSettingInternal() {
     ImGui::PushID("global_enable");
     ImGui::Text("Enable the following features:");
     ImGui::TextDisabled("Unticking will completely disable a feature from initializing and running. Requires Toolbox restart.");
-    
+
     ImGui::Text("Modules");
     auto items_per_col = static_cast<size_t>(ceil(optional_modules.size() / static_cast<float>(cols)));
     size_t col_count = 0;
@@ -427,4 +429,3 @@ void ToolboxSettings::Update(float delta) {
         }
     }
 }
-
