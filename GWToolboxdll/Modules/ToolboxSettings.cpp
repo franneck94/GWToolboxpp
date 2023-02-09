@@ -34,7 +34,6 @@
 #include <Modules/GWFileRequester.h>
 #endif
 #include <Modules/HallOfMonumentsModule.h>
-#include <Modules/ToastNotifications.h>
 #include <Modules/LoginModule.h>
 #include <Modules/MouseFix.h>
 
@@ -118,7 +117,6 @@ namespace {
         ChatFilter::Instance(),
         ItemFilter::Instance(),
         PartyWindowModule::Instance(),
-        ToastNotifications::Instance(),
         DiscordModule::Instance(),
         TwitchModule::Instance(),
         TeamspeakModule::Instance(),
