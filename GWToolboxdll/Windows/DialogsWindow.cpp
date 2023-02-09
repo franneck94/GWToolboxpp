@@ -187,7 +187,7 @@ void DialogsWindow::Draw(IDirect3DDevice9* pDevice) {
                         dialogindex = offset;
                         break;
                     }
-                    offset++;5
+                    offset++;
                 }
                 ImGui::EndCombo();
             }
