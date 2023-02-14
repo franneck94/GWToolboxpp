@@ -195,7 +195,7 @@ void DialogsWindow::Draw(IDirect3DDevice9* pDevice) {
             ImGui::SameLine(0, ImGui::GetStyle().ItemInnerSpacing.x);
             if (ImGui::Button("Send##1", ImVec2(60.0f, 0))) {
                 for (const auto dialog_id : current->second) {
-                    GW::Agents::SendDialog(dialog_id);
+                    DialogModule::SendDialog(dialog_id);
                 }
             }
 
