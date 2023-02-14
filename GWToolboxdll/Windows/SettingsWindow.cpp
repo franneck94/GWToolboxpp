@@ -130,6 +130,7 @@ void SettingsWindow::Draw(IDirect3DDevice9* pDevice) {
         DrawSettingsSection(ToolboxTheme::Instance().SettingsName());
         DrawSettingsSection(ToolboxSettings::Instance().SettingsName());
 
+<<<<<<< HEAD
         const auto sort = [](const ToolboxModule* a, const ToolboxModule* b) {
             return strcmp(a->Name(), b->Name()) < 0;
         };
@@ -155,6 +156,13 @@ void SettingsWindow::Draw(IDirect3DDevice9* pDevice) {
         for (const auto m : widgets) {
             if (m->HasSettings())
                 DrawSettingsSection(m->SettingsName());
+=======
+        const std::vector<ToolboxModule*>& optional_modules = ToolboxSettings::Instance().GetModules();
+        for (unsigned i = 0; i < optional_modules.size(); ++i) {
+            if (i == sep_windows) ImGui::Text("Windows:");
+            if (i == sep_widgets) ImGui::Text("Widgets:");
+            DrawSettingsSection(optional_modules[i]->SettingsName());
+>>>>>>> 3297e02b (move cursorfixes into MouseFix module)
         }
 
         if (ImGui::Button("Save Now", ImVec2(w, 0))) {

@@ -13,6 +13,7 @@ public:
         return instance;
     }
     const char* Name() const override { return "Mouse Settings"; }
+<<<<<<< HEAD
     const char* Description() const override { return " - Fixes occasional camera glitch when looking around in-game\n - Adds option to scale cursor size"; }
     const char* Icon() const override { return ICON_FA_MOUSE_POINTER; }
 
@@ -22,4 +23,13 @@ public:
     void Terminate() override;
     bool WndProc(UINT, WPARAM, LPARAM) override;
     void DrawSettingInternal() override;
+=======
+    const char8_t* Icon() const override { return ICON_FA_MOUSE_POINTER; }
+
+    bool HasSettings() override { return false; }
+
+    void Initialize() override;
+    void Terminate() override;
+    bool WndProc(UINT, WPARAM, LPARAM) override;
+>>>>>>> 3297e02b (move cursorfixes into MouseFix module)
 };

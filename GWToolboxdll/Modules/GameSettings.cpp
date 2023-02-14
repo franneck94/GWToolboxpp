@@ -2,6 +2,7 @@
 
 #include <GWCA/Utilities/MemoryPatcher.h>
 #include <GWCA/Utilities/Scanner.h>
+#include <GWCA/Utilities/MemoryPatcher.h>
 
 #include <GWCA/Constants/AgentIDs.h>
 #include <GWCA/Constants/Constants.h>
@@ -759,6 +760,7 @@ namespace {
             msg->component_flags |= 0x01000000;
         }
     }
+<<<<<<< HEAD
 
     void OnKeyDownAction(GW::HookStatus*, uint32_t key) {
         switch (static_cast<GW::UI::ControlAction>(key)) {
@@ -922,6 +924,8 @@ namespace {
         ImGui::Unindent();
     }
 
+=======
+>>>>>>> 3297e02b (move cursorfixes into MouseFix module)
 }
 
 const bool GameSettings::GetSettingBool(const char* setting) {
@@ -1468,8 +1472,11 @@ void GameSettings::Terminate() {
     ctrl_click_patch.Reset();
     tome_patch.Reset();
     gold_confirm_patch.Reset();
+<<<<<<< HEAD
     skill_description_patch.Reset();
     skip_map_entry_message_patch.Reset();
+=======
+>>>>>>> 3297e02b (move cursorfixes into MouseFix module)
 }
 
 void GameSettings::SaveSettings(ToolboxIni* ini) {
@@ -1803,7 +1810,10 @@ void GameSettings::FactionEarnedCheckAndWarn() {
 }
 
 void GameSettings::Update(float) {
+<<<<<<< HEAD
     UpdateSkillTooltip();
+=======
+>>>>>>> 3297e02b (move cursorfixes into MouseFix module)
     UpdateReinvite();
     UpdateItemTooltip();
     if (set_window_title_delay && TIMER_DIFF(set_window_title_delay) > 3000) {
@@ -1884,8 +1894,43 @@ void GameSettings::Update(float) {
 
 }
 
+<<<<<<< HEAD
 bool GameSettings::WndProc(UINT Message, WPARAM, LPARAM)
 {
+=======
+void GameSettings::DrawFOVSetting() {
+    ImGui::Checkbox("Maintain FOV", &maintain_fov);
+    ImGui::ShowHelp("GWToolbox will save and maintain the FOV setting used with /cam fov <value>");
+}
+
+void GameSettings::UpdateFOV() {
+    if (maintain_fov && GW::CameraMgr::GetFieldOfView() != fov) {
+        GW::CameraMgr::SetFieldOfView(fov);
+    }
+}
+
+bool GameSettings::WndProc(UINT Message, WPARAM wParam, LPARAM lParam) {
+    UNREFERENCED_PARAMETER(lParam);
+
+    // Open Whisper to targeted player with Ctrl + Enter
+    if (Message == WM_KEYDOWN
+        && wParam == VK_RETURN
+        && !ctrl_enter_whisper
+        && ImGui::GetIO().KeyCtrl
+        && !GW::Chat::GetIsTyping()) {
+        GW::AgentLiving* target = GW::Agents::GetTargetAsAgentLiving();
+        if (target && target->IsPlayer()) {
+            const wchar_t* player_name = GW::PlayerMgr::GetPlayerName(target->login_number);
+            ctrl_enter_whisper = true;
+            GW::GameThread::Enqueue([player_name]() {
+                GW::UI::SendUIMessage(GW::UI::UIMessage::kOpenWhisper, (wchar_t*)player_name);
+                ctrl_enter_whisper = false;
+                });
+            return true;
+        }
+    }
+
+>>>>>>> 3297e02b (move cursorfixes into MouseFix module)
     // I don't know what would be the best solution here, but the way we capture every messages as a sign of activity can be bad.
     // Added that because when someone was typing "/afk message" he was put online directly, because "enter-up" was captured.
     if (Message == WM_KEYUP)

@@ -535,8 +535,21 @@ void InfoWindow::Draw(IDirect3DDevice9* pDevice) {
     ImGui::SetNextWindowSize(ImVec2(300, 0), ImGuiCond_FirstUseEver);
     if (ImGui::Begin(Name(), GetVisiblePtr(), GetWinFlags())) {
         if (show_widgets) {
+<<<<<<< HEAD
             const auto& widgets = GWToolbox::Instance().GetWidgets();
 
+=======
+            const std::vector<ToolboxModule *> &optional_modules = ToolboxSettings::Instance().GetModules();
+            std::vector<ToolboxUIElement *> widgets;
+            widgets.reserve(optional_modules.size());
+            for (ToolboxModule *module : optional_modules) {
+                ToolboxUIElement *widget = dynamic_cast<ToolboxUIElement *>(module);
+                if (!widget || !widget->IsWidget())
+                    continue;
+                widgets.push_back(widget);
+            }
+            std::ranges::sort(widgets, [](auto *a, auto *b) { return std::strcmp(a->Name(), b->Name()) < 0; });
+>>>>>>> 3297e02b (move cursorfixes into MouseFix module)
             const unsigned cols = static_cast<unsigned>(ceil(ImGui::GetWindowSize().x / 200.f));
             ImGui::PushID("info_enable_widget_items");
             ImGui::Columns(static_cast<int>(cols), "info_enable_widgets", false);
